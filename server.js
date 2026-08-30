@@ -1,14 +1,12 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { OAuth2Client } = require("google-auth-library");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // ============================================================
 // BID XI V4 — Arabic / Turn Based Auction
@@ -505,26 +503,44 @@ io.on("connection",socket=>{
   socket.on("google_auth",async ({credential},cb)=>{
     try{
       if(!GOOGLE_CLIENT_ID){
-        return cb?.({ok:false,error:"GOOGLE_CLIENT_ID غير مضبوط على السيرفر"});
+        return cb?.({
+          ok:false,
+          error:"Google Login محتاج GOOGLE_CLIENT_ID في Railway Variables"
+        });
       }
 
       if(!credential){
         return cb?.({ok:false,error:"بيانات تسجيل الدخول غير موجودة"});
       }
 
-      const ticket=await googleClient.verifyIdToken({
-        idToken:credential,
-        audience:GOOGLE_CLIENT_ID
-      });
+      // Verify Google's ID token without any extra npm package.
+      const verifyUrl =
+        "https://oauth2.googleapis.com/tokeninfo?id_token=" +
+        encodeURIComponent(credential);
 
-      const payload=ticket.getPayload();
+      const response = await fetch(verifyUrl);
 
-      if(!payload?.sub || !payload?.name){
-        return cb?.({ok:false,error:"تعذر قراءة حساب Google"});
+      if(!response.ok){
+        return cb?.({ok:false,error:"Google رفض بيانات تسجيل الدخول"});
+      }
+
+      const payload = await response.json();
+
+      // The token must be issued for THIS game's Google Web Client ID.
+      if(payload.aud !== GOOGLE_CLIENT_ID){
+        return cb?.({ok:false,error:"Google Client ID غير مطابق للعبة"});
+      }
+
+      if(!payload.sub || !payload.name){
+        return cb?.({ok:false,error:"تعذر قراءة بيانات حساب Google"});
+      }
+
+      if(payload.email_verified !== "true" && payload.email_verified !== true){
+        return cb?.({ok:false,error:"حساب Google غير موثّق"});
       }
 
       socket.data.googleUser={
-        sub:payload.sub,
+        sub:String(payload.sub),
         name:String(payload.name).slice(0,30),
         email:String(payload.email||""),
         picture:String(payload.picture||"")
@@ -538,9 +554,10 @@ io.on("connection",socket=>{
           picture:socket.data.googleUser.picture
         }
       });
+
     }catch(err){
       console.error("Google auth error:",err?.message||err);
-      cb?.({ok:false,error:"فشل تسجيل الدخول بحساب Google"});
+      cb?.({ok:false,error:"تعذر الاتصال بخدمة Google الآن"});
     }
   });
 
@@ -1802,5 +1819,8 @@ function renderResult(r){
 app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V6 Google Login running on port "+PORT);
+  console.log("BID XI V6.1 Google Login running on port "+PORT);
+  if(!GOOGLE_CLIENT_ID){
+    console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
+  }
 });
