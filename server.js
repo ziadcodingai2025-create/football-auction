@@ -5,12 +5,10 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
 const PORT = process.env.PORT || 3000;
 
 // ============================================================
-// BID XI — V3
-// 2-player real-time football auction battle
+// BID XI V4 — Arabic / Turn Based Auction
 // ============================================================
 
 const FORMATION = [
@@ -71,88 +69,36 @@ const PLAYER_POOL = [
   {id:40,name:"Rodrygo",pos:"RW",ovr:88,nation:"BRA",base:12}
 ];
 
-const FLAG = {
-  BEL:"🇧🇪", BRA:"🇧🇷", ITA:"🇮🇹", FRA:"🇫🇷", CAN:"🇨🇦", POR:"🇵🇹",
-  NED:"🇳🇱", GER:"🇩🇪", MAR:"🇲🇦", ENG:"🏴", ESP:"🇪🇸", URU:"🇺🇾",
-  GEO:"🇬🇪", COL:"🇨🇴", NOR:"🇳🇴", ARG:"🇦🇷", SWE:"🇸🇪", EGY:"🇪🇬"
-};
-
 const MANAGERS = {
-  scout: {
-    id:"scout",
-    name:"THE SCOUT",
-    desc:"Mystery players receive +1 OVR.",
-    icon:"🔎"
-  },
-  tycoon: {
-    id:"tycoon",
-    name:"THE TYCOON",
-    desc:"+12M starting budget.",
-    icon:"💰"
-  },
-  tactician: {
-    id:"tactician",
-    name:"THE TACTICIAN",
-    desc:"+4 chemistry before the match.",
-    icon:"🧠"
-  }
+  scout:{id:"scout",name:"الكشاف",icon:"🔎",desc:"أي لاعب غامض تحصل عليه تزيد قوته +1."},
+  tycoon:{id:"tycoon",name:"رجل الأعمال",icon:"💰",desc:"تبدأ المباراة بميزانية إضافية +12 مليون."},
+  tactician:{id:"tactician",name:"المدرب التكتيكي",icon:"🧠",desc:"تحصل على +4 كيمياء قبل محاكاة المباراة."}
 };
 
-const POWER_CARDS = {
-  freeze: {
-    id:"freeze",
-    name:"FREEZE",
-    icon:"❄️",
-    desc:"Locks your opponent's bidding for 4 seconds."
-  },
-  boost: {
-    id:"boost",
-    name:"CASH BOOST",
-    icon:"💸",
-    desc:"Adds 6M to your budget."
-  },
-  pressure: {
-    id:"pressure",
-    name:"PRESSURE",
-    icon:"🔥",
-    desc:"Adds 3M to the current bid without charging you immediately."
-  }
+const FLAGS={
+  BEL:"🇧🇪",BRA:"🇧🇷",ITA:"🇮🇹",FRA:"🇫🇷",CAN:"🇨🇦",POR:"🇵🇹",
+  NED:"🇳🇱",GER:"🇩🇪",MAR:"🇲🇦",ENG:"🏴",ESP:"🇪🇸",URU:"🇺🇾",
+  GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬"
 };
 
-const rooms = new Map();
+const rooms=new Map();
 
-function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
-function code6(){
+function makeCode(){
   const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s="";
   for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
   return s;
 }
 
-function shuffle(arr){
-  const a=[...arr];
-  for(let i=a.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [a[i],a[j]]=[a[j],a[i]];
-  }
-  return a;
-}
-
-function makeCardHand(){
-  return shuffle(Object.keys(POWER_CARDS)).slice(0,2);
-}
-
 function publicUser(u){
   return {
     id:u.id,
     name:u.name,
-    budget:u.budget,
-    squad:u.squad,
     manager:u.manager,
-    cards:u.cards,
-    usedCards:u.usedCards,
-    frozenUntil:u.frozenUntil || 0
+    budget:u.budget,
+    squad:u.squad
   };
 }
 
@@ -163,10 +109,10 @@ function publicRoom(room){
     phase:room.phase,
     round:room.round,
     roundCount:FORMATION.length,
-    positions:FORMATION,
     current:room.current,
     currentBid:room.currentBid,
     highestBidder:room.highestBidder,
+    turnPlayerId:room.turnPlayerId,
     seconds:room.seconds,
     players:[...room.users.values()].map(publicUser)
   };
@@ -182,11 +128,35 @@ function choosePlayer(pos,used){
   return pool[Math.floor(Math.random()*pool.length)];
 }
 
-function chooseMystery(pos,exclude){
+function mysteryPlayer(pos,exclude){
   let pool=PLAYER_POOL.filter(p=>p.pos===pos&&!exclude.has(p.id));
   if(!pool.length) pool=PLAYER_POOL.filter(p=>p.pos===pos);
   const p=pool[Math.floor(Math.random()*pool.length)];
   return {...p,price:0,mystery:true};
+}
+
+function otherUser(room,userId){
+  return [...room.users.values()].find(u=>u.id!==userId) || null;
+}
+
+function setTurn(room,userId){
+  room.turnPlayerId=userId;
+  room.seconds=10;
+
+  if(room.turnTimer) clearInterval(room.turnTimer);
+
+  emitRoom(room);
+
+  room.turnTimer=setInterval(()=>{
+    room.seconds--;
+
+    if(room.seconds<=0){
+      clearInterval(room.turnTimer);
+      handlePass(room,userId,"timeout");
+    }else{
+      emitRoom(room);
+    }
+  },1000);
 }
 
 function startAuction(room){
@@ -195,20 +165,15 @@ function startAuction(room){
   room.used=new Set();
 
   for(const u of room.users.values()){
-    let budget=180;
-    if(u.manager==="tycoon") budget+=12;
-    u.budget=budget;
+    u.budget=180+(u.manager==="tycoon"?12:0);
     u.squad=[];
-    u.cards=makeCardHand();
-    u.usedCards=[];
-    u.frozenUntil=0;
   }
 
   nextRound(room);
 }
 
 function nextRound(room){
-  if(room.timer) clearInterval(room.timer);
+  if(room.turnTimer) clearInterval(room.turnTimer);
 
   if(room.round>=FORMATION.length){
     finishMatch(room);
@@ -227,85 +192,131 @@ function nextRound(room){
   room.current=p;
   room.currentBid=p.base;
   room.highestBidder=null;
-  room.seconds=22;
 
-  emitRoom(room);
+  const users=[...room.users.values()];
 
-  room.timer=setInterval(()=>{
-    room.seconds--;
-    if(room.seconds<=0){
-      clearInterval(room.timer);
-      settleRound(room);
-    }else{
-      emitRoom(room);
-    }
-  },1000);
+  // Fairness: alternate who starts each round.
+  const starter=users[room.round%2];
+  setTurn(room,starter.id);
 }
 
-function settleRound(room){
-  const winner=room.highestBidder ? room.users.get(room.highestBidder) : null;
-  const result={
-    auctionPlayer:room.current,
-    winnerId:winner?.id || null,
-    winnerName:winner?.name || null,
-    price:winner ? room.currentBid : 0,
-    mystery:[]
-  };
+function awardCurrentPlayer(room,winner,reason){
+  if(room.turnTimer) clearInterval(room.turnTimer);
 
-  if(winner && winner.budget>=room.currentBid){
-    winner.budget-=room.currentBid;
-    winner.squad.push({...room.current,price:room.currentBid,mystery:false});
+  if(!winner){
+    // Fallback only if something unexpected happened.
+    room.round++;
+    room.current=null;
+    room.currentBid=0;
+    room.highestBidder=null;
+    room.turnPlayerId=null;
+    room.seconds=0;
+    emitRoom(room);
+    setTimeout(()=>nextRound(room),1800);
+    return;
   }
 
-  for(const u of room.users.values()){
-    if(!winner || u.id!==winner.id){
-      const exclude=new Set(u.squad.map(x=>x.id).filter(x=>typeof x.id==="number"));
-      let m=chooseMystery(room.current.pos,exclude);
+  let finalPrice=room.currentBid;
 
-      if(u.manager==="scout"){
-        m={...m,ovr:clamp(m.ovr+1,0,99)};
-      }
+  if(finalPrice>winner.budget){
+    // If the winner cannot afford the current price, give a free mystery player instead.
+    const exclude=new Set(winner.squad.map(x=>x.id).filter(x=>typeof x.id==="number"));
+    let m=mysteryPlayer(room.current.pos,exclude);
+    if(winner.manager==="scout") m={...m,ovr:clamp(m.ovr+1,0,99)};
+    winner.squad.push(m);
 
-      u.squad.push(m);
-      result.mystery.push({userId:u.id,userName:u.name,player:m});
-    }
+    io.to(room.code).emit("round_result",{
+      winnerId:winner.id,
+      winnerName:winner.name,
+      price:0,
+      reason:"budget_fallback",
+      player:m,
+      mystery:true
+    });
+  }else{
+    winner.budget-=finalPrice;
+    const signed={...room.current,price:finalPrice,mystery:false};
+    winner.squad.push(signed);
+
+    io.to(room.code).emit("round_result",{
+      winnerId:winner.id,
+      winnerName:winner.name,
+      price:finalPrice,
+      reason,
+      player:signed,
+      mystery:false
+    });
   }
-
-  io.to(room.code).emit("round_result",result);
 
   room.round++;
   room.current=null;
   room.currentBid=0;
   room.highestBidder=null;
+  room.turnPlayerId=null;
   room.seconds=0;
 
   emitRoom(room);
+  setTimeout(()=>nextRound(room),2300);
+}
 
-  setTimeout(()=>nextRound(room),2600);
+function handlePass(room,playerId,reason){
+  if(room.phase!=="auction"||!room.current) return;
+  if(room.turnPlayerId!==playerId) return;
+
+  const passer=room.users.get(playerId);
+  const opponent=otherUser(room,playerId);
+
+  let winner=null;
+
+  if(room.highestBidder){
+    winner=room.users.get(room.highestBidder);
+  }else{
+    // No one has bid yet: if the current player passes, opponent gets the player at base price.
+    winner=opponent;
+  }
+
+  io.to(room.code).emit("pass_event",{
+    playerId,
+    playerName:passer?.name || "لاعب",
+    reason
+  });
+
+  awardCurrentPlayer(room,winner,reason);
 }
 
 function calcChemistry(user){
   let chem=0;
-  const nationCounts={};
+  const nations={};
+
   for(const p of user.squad){
-    nationCounts[p.nation]=(nationCounts[p.nation]||0)+1;
+    nations[p.nation]=(nations[p.nation]||0)+1;
   }
-  for(const count of Object.values(nationCounts)){
+
+  for(const count of Object.values(nations)){
     if(count>=2) chem+=2;
     if(count>=3) chem+=2;
   }
+
   if(user.manager==="tactician") chem+=4;
+
   return clamp(chem,0,20);
 }
 
-function teamMetrics(user){
+function metrics(user){
   const avg=user.squad.reduce((a,p)=>a+p.ovr,0)/Math.max(1,user.squad.length);
-  const attack=user.squad.filter(p=>["LW","ST","RW","CAM"].includes(p.pos)).reduce((a,p)=>a+p.ovr,0);
-  const midfield=user.squad.filter(p=>["CM","CAM"].includes(p.pos)).reduce((a,p)=>a+p.ovr,0);
-  const defense=user.squad.filter(p=>["GK","LB","CB","RB"].includes(p.pos)).reduce((a,p)=>a+p.ovr,0);
   const chem=calcChemistry(user);
-  const tactical=Math.random()*5;
-  const strength=avg + chem*0.28 + tactical;
+
+  const attack=user.squad
+    .filter(p=>["LW","ST","RW","CAM"].includes(p.pos))
+    .reduce((a,p)=>a+p.ovr,0);
+
+  const midfield=user.squad
+    .filter(p=>["CM","CAM"].includes(p.pos))
+    .reduce((a,p)=>a+p.ovr,0);
+
+  const defense=user.squad
+    .filter(p=>["GK","LB","CB","RB"].includes(p.pos))
+    .reduce((a,p)=>a+p.ovr,0);
 
   return {
     id:user.id,
@@ -317,13 +328,14 @@ function teamMetrics(user){
     attack,
     midfield,
     defense,
-    strength
+    strength:avg+(chem*.28)+(Math.random()*5)
   };
 }
 
 function finishMatch(room){
   room.phase="result";
   room.current=null;
+  room.turnPlayerId=null;
   room.seconds=0;
 
   const users=[...room.users.values()];
@@ -332,30 +344,27 @@ function finishMatch(room){
     return;
   }
 
-  const a=teamMetrics(users[0]);
-  const b=teamMetrics(users[1]);
+  const a=metrics(users[0]);
+  const b=metrics(users[1]);
 
-  function goalCount(team,opp){
+  function goals(team,opp){
     const delta=(team.strength-opp.strength)/7;
-    const raw=1.1+Math.random()*2.3+delta;
-    return clamp(Math.round(raw),0,6);
+    return clamp(Math.round(1.1+Math.random()*2.3+delta),0,6);
   }
 
-  let ga=goalCount(a,b);
-  let gb=goalCount(b,a);
+  let ga=goals(a,b);
+  let gb=goals(b,a);
 
   if(ga===gb){
     if(a.strength>=b.strength) ga++;
     else gb++;
   }
 
-  const totalGoals=ga+gb;
   const events=[];
   let leftA=ga,leftB=gb;
 
-  for(let i=0;i<totalGoals;i++){
-    const minute=4+Math.floor(Math.random()*87);
-    const chooseA=leftA>0 && (leftB===0 || Math.random()<leftA/(leftA+leftB));
+  for(let i=0;i<ga+gb;i++){
+    const chooseA=leftA>0&&(leftB===0||Math.random()<leftA/(leftA+leftB));
     const team=chooseA?a:b;
 
     const scorers=team.squad.filter(p=>["ST","LW","RW","CAM","CM"].includes(p.pos));
@@ -363,7 +372,7 @@ function finishMatch(room){
     const scorer=pool[Math.floor(Math.random()*pool.length)];
 
     events.push({
-      minute,
+      minute:4+Math.floor(Math.random()*87),
       type:"goal",
       teamId:team.id,
       teamName:team.name,
@@ -374,77 +383,66 @@ function finishMatch(room){
     else leftB--;
   }
 
-  const extraEvents=[
-    {type:"yellow",icon:"🟨"},
-    {type:"save",icon:"🧤"},
-    {type:"chance",icon:"⚡"}
-  ];
-
   for(let i=0;i<4;i++){
-    const ev=extraEvents[Math.floor(Math.random()*extraEvents.length)];
+    const types=[
+      {type:"save",icon:"🧤"},
+      {type:"yellow",icon:"🟨"},
+      {type:"chance",icon:"⚡"}
+    ];
+    const e=types[Math.floor(Math.random()*types.length)];
     const team=Math.random()<.5?a:b;
-    const minute=5+Math.floor(Math.random()*84);
+    const p=team.squad[Math.floor(Math.random()*team.squad.length)];
+
     events.push({
-      minute,
-      type:ev.type,
-      icon:ev.icon,
+      minute:5+Math.floor(Math.random()*84),
+      type:e.type,
+      icon:e.icon,
       teamId:team.id,
       teamName:team.name,
-      player:team.squad[Math.floor(Math.random()*team.squad.length)]?.name || ""
+      player:p?.name || ""
     });
   }
 
   events.sort((x,y)=>x.minute-y.minute);
 
   const winner=ga>gb?a:b;
-  const loser=ga>gb?b:a;
-
-  const xgA=Math.max(.3,ga*0.72+Math.random()*1.4);
-  const xgB=Math.max(.3,gb*0.72+Math.random()*1.4);
+  const xgA=Math.max(.3,ga*.72+Math.random()*1.4);
+  const xgB=Math.max(.3,gb*.72+Math.random()*1.4);
 
   const possA=clamp(Math.round(50+(a.midfield-b.midfield)/18+(Math.random()*8-4)),37,63);
   const possB=100-possA;
 
-  const shotsA=Math.max(ga,Math.round(xgA*4+Math.random()*4));
-  const shotsB=Math.max(gb,Math.round(xgB*4+Math.random()*4));
-
-  const motmCandidates=winner.squad.filter(p=>["ST","LW","RW","CAM","CM"].includes(p.pos));
-  const motmPool=motmCandidates.length?motmCandidates:winner.squad;
-  const motm=motmPool[Math.floor(Math.random()*motmPool.length)];
-
   const result={
     winnerId:winner.id,
     winnerName:winner.name,
-    loserId:loser.id,
     score:{[a.id]:ga,[b.id]:gb},
     teams:[a,b],
     stats:{
       possession:{[a.id]:possA,[b.id]:possB},
-      shots:{[a.id]:shotsA,[b.id]:shotsB},
+      shots:{
+        [a.id]:Math.max(ga,Math.round(xgA*4+Math.random()*4)),
+        [b.id]:Math.max(gb,Math.round(xgB*4+Math.random()*4))
+      },
       xg:{[a.id]:xgA.toFixed(1),[b.id]:xgB.toFixed(1)}
     },
-    events,
-    motm:motm?.name || winner.name
+    events
   };
 
   room.result=result;
+
   io.to(room.code).emit("match_result",result);
   emitRoom(room);
 }
 
-function getOpponent(room,socketId){
-  return [...room.users.values()].find(u=>u.id!==socketId);
-}
-
 // ============================================================
-// SOCKETS
+// SOCKET.IO
 // ============================================================
 
 io.on("connection",socket=>{
 
   socket.on("create",({name},cb)=>{
     let code;
-    do{code=code6();}while(rooms.has(code));
+    do{code=makeCode();}while(rooms.has(code));
 
     const room={
       code,
@@ -454,10 +452,11 @@ io.on("connection",socket=>{
       current:null,
       currentBid:0,
       highestBidder:null,
+      turnPlayerId:null,
       seconds:0,
       users:new Map(),
-      timer:null,
       used:new Set(),
+      turnTimer:null,
       result:null
     };
 
@@ -466,38 +465,35 @@ io.on("connection",socket=>{
       name:String(name||"Player").slice(0,18),
       manager:null,
       budget:180,
-      squad:[],
-      cards:[],
-      usedCards:[],
-      frozenUntil:0
+      squad:[]
     });
 
     rooms.set(code,room);
     socket.join(code);
+
     cb?.({ok:true,code});
     emitRoom(room);
   });
 
   socket.on("join",({name,code},cb)=>{
     code=String(code||"").trim().toUpperCase();
+
     const room=rooms.get(code);
 
-    if(!room) return cb?.({ok:false,error:"Room not found"});
-    if(room.phase!=="manager") return cb?.({ok:false,error:"Game already started"});
-    if(room.users.size>=2) return cb?.({ok:false,error:"Room is full — 2 players only"});
+    if(!room) return cb?.({ok:false,error:"الغرفة غير موجودة"});
+    if(room.phase!=="manager") return cb?.({ok:false,error:"اللعبة بدأت بالفعل"});
+    if(room.users.size>=2) return cb?.({ok:false,error:"الغرفة ممتلئة — لاعبان فقط"});
 
     room.users.set(socket.id,{
       id:socket.id,
       name:String(name||"Player").slice(0,18),
       manager:null,
       budget:180,
-      squad:[],
-      cards:[],
-      usedCards:[],
-      frozenUntil:0
+      squad:[]
     });
 
     socket.join(code);
+
     cb?.({ok:true,code});
     emitRoom(room);
   });
@@ -506,22 +502,26 @@ io.on("connection",socket=>{
     const room=rooms.get(code);
     const user=room?.users.get(socket.id);
 
-    if(!room||!user) return cb?.({ok:false,error:"Room not found"});
-    if(!MANAGERS[manager]) return cb?.({ok:false,error:"Invalid manager"});
+    if(!room||!user) return cb?.({ok:false,error:"الغرفة غير موجودة"});
+    if(!MANAGERS[manager]) return cb?.({ok:false,error:"اختيار غير صالح"});
 
     user.manager=manager;
+
     emitRoom(room);
     cb?.({ok:true});
   });
 
   socket.on("start",({code},cb)=>{
     const room=rooms.get(code);
-    if(!room) return cb?.({ok:false,error:"Room not found"});
-    if(room.hostId!==socket.id) return cb?.({ok:false,error:"Host only"});
-    if(room.users.size!==2) return cb?.({ok:false,error:"Exactly 2 players are required"});
+
+    if(!room) return cb?.({ok:false,error:"الغرفة غير موجودة"});
+    if(room.hostId!==socket.id) return cb?.({ok:false,error:"صاحب الغرفة فقط يمكنه البدء"});
+    if(room.users.size!==2) return cb?.({ok:false,error:"لازم يكون فيه لاعبين بالضبط"});
 
     const users=[...room.users.values()];
-    if(users.some(u=>!u.manager)) return cb?.({ok:false,error:"Both players must choose a manager"});
+    if(users.some(u=>!u.manager)){
+      return cb?.({ok:false,error:"كل لاعب لازم يختار مدرب"});
+    }
 
     startAuction(room);
     cb?.({ok:true});
@@ -529,86 +529,70 @@ io.on("connection",socket=>{
 
   socket.on("bid",({code,amount},cb)=>{
     const room=rooms.get(code);
+
     if(!room||room.phase!=="auction"||!room.current){
-      return cb?.({ok:false,error:"No active auction"});
+      return cb?.({ok:false,error:"لا يوجد مزاد حالي"});
+    }
+
+    if(room.turnPlayerId!==socket.id){
+      return cb?.({ok:false,error:"استنى دورك"});
     }
 
     const user=room.users.get(socket.id);
-    if(!user) return cb?.({ok:false,error:"Not in room"});
+    const opponent=otherUser(room,socket.id);
 
-    if(Date.now()<(user.frozenUntil||0)){
-      const secs=Math.ceil((user.frozenUntil-Date.now())/1000);
-      return cb?.({ok:false,error:`Frozen for ${secs}s`});
-    }
-
-    // No self-bidding.
-    if(room.highestBidder===socket.id){
-      return cb?.({ok:false,error:"You already lead this auction"});
+    if(!user||!opponent){
+      return cb?.({ok:false,error:"مشكلة في اللاعبين"});
     }
 
     const n=Number(amount);
-    if(!Number.isFinite(n)) return cb?.({ok:false,error:"Invalid bid"});
-    if(n<=room.currentBid) return cb?.({ok:false,error:"Bid must be higher"});
-    if(n>user.budget) return cb?.({ok:false,error:"Not enough budget"});
+
+    if(!Number.isFinite(n)) return cb?.({ok:false,error:"مزايدة غير صحيحة"});
+    if(n<=room.currentBid) return cb?.({ok:false,error:"لازم المزايدة تكون أعلى من السعر الحالي"});
+    if(n>user.budget) return cb?.({ok:false,error:"ميزانيتك لا تكفي"});
 
     room.currentBid=Math.round(n*10)/10;
     room.highestBidder=socket.id;
 
-    if(room.seconds<=3) room.seconds=5;
+    io.to(room.code).emit("bid_event",{
+      bidderId:user.id,
+      bidderName:user.name,
+      amount:room.currentBid
+    });
 
-    emitRoom(room);
+    // Successful bid => immediately hand the turn to opponent with a fresh 10 seconds.
+    setTurn(room,opponent.id);
+
     cb?.({ok:true});
   });
 
-  socket.on("use_card",({code,card},cb)=>{
+  socket.on("pass",({code},cb)=>{
     const room=rooms.get(code);
-    const user=room?.users.get(socket.id);
 
-    if(!room||!user) return cb?.({ok:false,error:"Room not found"});
-    if(room.phase!=="auction") return cb?.({ok:false,error:"Cards work during auctions"});
-    if(!user.cards.includes(card)) return cb?.({ok:false,error:"You do not own this card"});
-    if(user.usedCards.includes(card)) return cb?.({ok:false,error:"Card already used"});
-
-    const opponent=getOpponent(room,socket.id);
-
-    if(card==="freeze"){
-      if(!opponent) return cb?.({ok:false,error:"No opponent"});
-      opponent.frozenUntil=Date.now()+4000;
+    if(!room||room.phase!=="auction"||!room.current){
+      return cb?.({ok:false,error:"لا يوجد مزاد حالي"});
     }
 
-    if(card==="boost"){
-      user.budget+=6;
+    if(room.turnPlayerId!==socket.id){
+      return cb?.({ok:false,error:"مش دورك"});
     }
 
-    if(card==="pressure"){
-      room.currentBid+=3;
-      room.highestBidder=null;
-    }
-
-    user.usedCards.push(card);
-
-    io.to(room.code).emit("card_event",{
-      userId:user.id,
-      userName:user.name,
-      card,
-      cardName:POWER_CARDS[card].name,
-      icon:POWER_CARDS[card].icon
-    });
-
-    emitRoom(room);
+    handlePass(room,socket.id,"manual");
     cb?.({ok:true});
   });
 
   socket.on("rematch",({code},cb)=>{
     const room=rooms.get(code);
-    if(!room) return cb?.({ok:false,error:"Room not found"});
-    if(room.users.size!==2) return cb?.({ok:false,error:"Need both players"});
+
+    if(!room) return cb?.({ok:false,error:"الغرفة غير موجودة"});
+    if(room.users.size!==2) return cb?.({ok:false,error:"لازم اللاعبان يكونوا موجودين"});
 
     room.phase="manager";
     room.round=0;
     room.current=null;
     room.currentBid=0;
     room.highestBidder=null;
+    room.turnPlayerId=null;
     room.seconds=0;
     room.result=null;
 
@@ -616,9 +600,6 @@ io.on("connection",socket=>{
       u.manager=null;
       u.budget=180;
       u.squad=[];
-      u.cards=[];
-      u.usedCards=[];
-      u.frozenUntil=0;
     }
 
     emitRoom(room);
@@ -627,6 +608,7 @@ io.on("connection",socket=>{
 
   socket.on("disconnect",()=>{
     for(const [code,room] of rooms.entries()){
+
       if(!room.users.has(socket.id)) continue;
 
       room.users.delete(socket.id);
@@ -636,7 +618,7 @@ io.on("connection",socket=>{
       }
 
       if(room.users.size===0){
-        if(room.timer) clearInterval(room.timer);
+        if(room.turnTimer) clearInterval(room.turnTimer);
         rooms.delete(code);
       }else{
         emitRoom(room);
@@ -651,48 +633,50 @@ io.on("connection",socket=>{
 
 const PAGE=String.raw`
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI</title>
+<title>BID XI — حرب المزاد</title>
+
 <style>
 *{box-sizing:border-box}
 :root{
   --bg:#050908;--panel:#0c1512;--panel2:#111f1a;--line:#20352c;
-  --text:#f3fff7;--muted:#8fa49a;--lime:#43f47d;--lime2:#1dbf59;
-  --gold:#ffd969;--red:#ff6370;--blue:#6aa9ff;--purple:#a688ff;
+  --text:#f4fff8;--muted:#91a79c;--lime:#43f47d;--lime2:#1dbf59;
+  --gold:#ffd969;--red:#ff6370;--blue:#6aa9ff;
 }
-html,body{margin:0;min-height:100%;background:#050908;color:var(--text);font-family:Inter,Arial,sans-serif}
+html,body{margin:0;min-height:100%;background:#050908;color:var(--text);font-family:Tahoma,Arial,sans-serif}
 body{
   background:
-    radial-gradient(circle at 50% -5%,rgba(67,244,125,.16),transparent 26%),
+    radial-gradient(circle at 50% -5%,rgba(67,244,125,.16),transparent 27%),
     radial-gradient(circle at 100% 20%,rgba(106,169,255,.07),transparent 24%),
     linear-gradient(#050908,#040706 70%);
 }
 button,input{font:inherit}
 button{cursor:pointer}
-.app{max-width:590px;margin:auto;padding:15px 14px 42px;min-height:100vh}
+.app{max-width:620px;margin:auto;padding:15px 14px 44px;min-height:100vh}
 .screen{display:none}.screen.active{display:block}
-.hidden{display:none!important}.muted{color:var(--muted)}.lime{color:var(--lime)}
+.hidden{display:none!important}.muted{color:var(--muted)}
 .card{
   background:linear-gradient(180deg,rgba(17,31,26,.98),rgba(8,16,13,.98));
-  border:1px solid var(--line);border-radius:24px;
+  border:1px solid var(--line);border-radius:24px
 }
 .brand{text-align:center;padding:32px 0 21px}
 .logo{
   width:88px;height:88px;margin:auto;border-radius:27px;display:grid;place-items:center;
   font-size:46px;background:linear-gradient(150deg,#153324,#07100c);
-  border:1px solid #2b4a39;box-shadow:inset 0 0 40px rgba(67,244,125,.08)
+  border:1px solid #2b4a39
 }
-.brand h1{font-size:48px;line-height:.87;margin:14px 0 8px;letter-spacing:-2px}
+.brand h1{font-size:47px;line-height:.87;margin:14px 0 8px;letter-spacing:-2px}
 .brand h1 span{color:var(--lime)}
 .brand p{margin:0;color:var(--muted)}
 .homeCard{padding:18px}
-label,small{display:block;color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.09em}
+label,small{display:block;color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.03em}
+.help{font-size:11px;line-height:1.55;color:var(--muted);margin:5px 2px 12px}
 input{
-  width:100%;min-height:52px;margin:8px 0 13px;padding:0 14px;color:#fff;
+  width:100%;min-height:52px;margin:8px 0 6px;padding:0 14px;color:#fff;
   border:1px solid var(--line);border-radius:15px;background:#06100c;outline:none;font-size:16px
 }
 input:focus{border-color:var(--lime);box-shadow:0 0 0 3px rgba(67,244,125,.09)}
@@ -700,8 +684,10 @@ button{
   border:1px solid var(--line);background:#122019;color:#fff;border-radius:15px;
   min-height:50px;padding:10px 15px;font-weight:950
 }
-button:active{transform:translateY(1px)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:active:not(:disabled){transform:translateY(1px)}
 .primary{width:100%;border:0;color:#041008;background:linear-gradient(var(--lime),var(--lime2))}
+.danger{width:100%;border-color:rgba(255,99,112,.45);background:rgba(255,99,112,.09);color:#ff9ba4}
 .secondary{width:100%}
 .or{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:11px;margin:17px 0}
 .or:before,.or:after{content:"";height:1px;background:var(--line);flex:1}
@@ -709,8 +695,8 @@ button:active{transform:translateY(1px)}
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px}
 .topbar h2{margin:2px 0 0}.live{color:var(--lime);font-size:12px;font-weight:950}
 .roomHero{text-align:center;padding:24px;margin-bottom:14px}
-.roomHero .code{font-size:43px;letter-spacing:.14em;color:var(--lime);font-weight:1000;margin:10px 0}
-.duel{display:grid;grid-template-columns:1fr 50px 1fr;gap:8px;align-items:center;margin-bottom:14px}
+.roomHero .code{font-size:43px;letter-spacing:.14em;color:var(--lime);font-weight:1000;margin:10px 0;direction:ltr}
+.duel{display:grid;grid-template-columns:1fr 46px 1fr;gap:8px;align-items:center;margin-bottom:14px}
 .managerMini{text-align:center;padding:14px;min-width:0}
 .avatar{
   width:48px;height:48px;margin:auto;border-radius:50%;display:grid;place-items:center;
@@ -720,17 +706,24 @@ button:active{transform:translateY(1px)}
 .vs{text-align:center;color:var(--gold);font-weight:1000}
 .managerPick{padding:18px}
 .managerGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:11px 0 15px}
-.managerChoice{min-height:128px;text-align:left;padding:12px}
+.managerChoice{min-height:145px;text-align:right;padding:12px}
 .managerChoice.selected{border-color:var(--lime);background:rgba(67,244,125,.08)}
-.managerChoice .icon{font-size:29px}.managerChoice b{display:block;margin:7px 0 5px;font-size:12px}
-.managerChoice span{font-size:10px;color:var(--muted);line-height:1.3;display:block}
+.managerChoice .icon{font-size:29px}.managerChoice b{display:block;margin:7px 0 5px;font-size:13px}
+.managerChoice span{font-size:10px;color:var(--muted);line-height:1.5;display:block}
 .auctionHeader{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin-bottom:12px}
-.timer{
-  width:70px;height:70px;border-radius:50%;display:grid;place-items:center;position:relative;
+.round{text-align:right}.roomTag{text-align:left;direction:ltr}
+.turnTimer{
+  width:82px;height:82px;border-radius:50%;display:grid;place-items:center;position:relative;
   background:conic-gradient(var(--lime) var(--deg,360deg),#183026 0)
 }
-.timer:after{content:"";position:absolute;inset:6px;border-radius:50%;background:#07100d;border:1px solid var(--line)}
-.timer b{z-index:2;font-size:23px}.right{text-align:right}
+.turnTimer:after{content:"";position:absolute;inset:7px;border-radius:50%;background:#07100d;border:1px solid var(--line)}
+.turnTimer .inside{z-index:2;text-align:center}.turnTimer b{display:block;font-size:23px}.turnTimer small{font-size:8px}
+.turnBanner{
+  padding:12px 14px;border-radius:17px;margin-bottom:10px;text-align:center;
+  border:1px solid var(--line);background:#0b1712;font-weight:900
+}
+.turnBanner.mine{border-color:rgba(67,244,125,.55);background:rgba(67,244,125,.07);color:#b9ffce}
+.turnBanner.theirs{color:#ffdca3}
 .stage{
   border:1px solid var(--line);border-radius:27px;padding:21px;overflow:hidden;position:relative;
   background:
@@ -738,51 +731,60 @@ button:active{transform:translateY(1px)}
     radial-gradient(circle at 86% 12%,rgba(255,217,105,.10),transparent 24%),
     linear-gradient(145deg,#14271e,#08100d)
 }
-.stage:after{
-  content:"";position:absolute;left:-10%;right:-10%;bottom:-105px;height:190px;
-  border:1px solid rgba(67,244,125,.16);border-radius:50%
-}
 .pos{display:inline-flex;padding:7px 13px;border-radius:999px;background:var(--lime);color:#041008;font-weight:1000;font-size:12px}
 .playerHero{display:grid;grid-template-columns:136px 1fr;gap:18px;align-items:center;margin-top:16px;position:relative;z-index:2}
 .playerCard{
-  height:178px;border-radius:24px;display:grid;place-items:center;position:relative;overflow:hidden;
+  height:178px;border-radius:24px;display:grid;place-items:center;position:relative;
   border:1px solid #385747;background:linear-gradient(160deg,#2b4f3b,#0b1711)
 }
-.playerCard .sil{font-size:78px;filter:drop-shadow(0 9px 12px rgba(0,0,0,.25))}
-.ovr{
-  position:absolute;top:9px;left:9px;padding:7px 8px;border-radius:12px;background:#07100d;
+.playerCard .sil{font-size:76px}.ovr{
+  position:absolute;top:9px;right:9px;padding:7px 8px;border-radius:12px;background:#07100d;
   border:1px solid var(--line);font-weight:1000;color:var(--gold)
 }
-.playerInfo h1{font-size:29px;line-height:1;margin:8px 0}
+.playerInfo h1{font-size:29px;line-height:1;margin:8px 0;direction:ltr;text-align:right}
 .playerMeta{color:var(--muted);font-size:13px;font-weight:800}
 .bidBox{text-align:center;padding:18px;margin-top:11px}
-.priceLabel{color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.08em}
-.price{font-size:52px;color:var(--lime);font-weight:1000;margin:2px 0}
+.priceLabel{color:var(--muted);font-size:11px;font-weight:900}
+.price{font-size:52px;color:var(--lime);font-weight:1000;margin:2px 0;direction:ltr}
 .highest{font-size:13px;color:var(--muted);margin-bottom:12px}
-.quick{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.quick{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;direction:ltr}
 .quick button{min-height:44px;padding:7px}
-.custom{display:grid;grid-template-columns:1fr 100px;gap:7px;margin-top:8px}
-.custom input{margin:0}
-.duelHud{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
-.hud{padding:12px}.hud.you{border-color:rgba(67,244,125,.6)}
-.hudTop{display:flex;justify-content:space-between;gap:8px;font-size:12px}.hudTop b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.money{color:var(--gold);font-weight:1000}
-.bar{height:7px;border-radius:999px;background:#07100d;overflow:hidden;margin:8px 0}
-.bar>div{height:100%;background:var(--lime)}
-.hudBottom{display:flex;justify-content:space-between;gap:5px;color:var(--muted);font-size:10px}
-.cardTray{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
-.powerCard{padding:12px;text-align:left;min-height:78px}
-.powerCard.used{opacity:.35}
-.powerCard .ci{font-size:24px}.powerCard b{display:block;margin:3px 0;font-size:11px}.powerCard span{font-size:9px;color:var(--muted);display:block}
+.custom{display:grid;grid-template-columns:1fr 110px;gap:7px;margin-top:8px;direction:ltr}
+.custom input{margin:0;direction:ltr}
+.auctionActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.duelTimers{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
+.playerTimer{padding:13px}.playerTimer.activeTurn{border-color:rgba(67,244,125,.6)}
+.ptop{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.ptop b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.money{color:var(--gold);font-weight:1000}
+.pstatus{margin-top:8px;font-size:11px;color:var(--muted)}
+.pitchSection{margin-top:13px}
+.pitchTitle{display:flex;justify-content:space-between;align-items:center;margin:0 2px 7px}
+.pitch{
+  padding:13px 8px;border:1px solid var(--line);border-radius:23px;
+  background:
+    linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px),
+    linear-gradient(#0d3b23,#082d1b);
+  background-size:100% 25%,25% 100%,auto;min-height:320px
+}
+.pitchRows{display:flex;flex-direction:column;justify-content:space-between;height:294px}
+.pitchRow{display:flex;justify-content:space-around;gap:4px;direction:ltr}
+.pitchPlayer{
+  width:73px;text-align:center;padding:6px 3px;border-radius:12px;
+  background:rgba(5,12,8,.84);border:1px solid rgba(255,255,255,.12)
+}
+.pitchPlayer .povr{color:var(--gold);font-weight:1000;font-size:12px}
+.pitchPlayer b{display:block;font-size:8px;direction:ltr;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pitchPlayer small{font-size:7px;letter-spacing:0}
 .overlay{
   position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;padding:20px;
   background:rgba(2,7,5,.84);backdrop-filter:blur(9px)
 }
 .overlay.show{display:flex}
-.reveal{width:min(430px,100%);padding:24px;text-align:center}.revealIcon{font-size:50px}
-.reveal h2{margin:9px 0 6px}
+.reveal{width:min(430px,100%);padding:24px;text-align:center}
+.revealIcon{font-size:50px}.reveal h2{margin:9px 0 6px}
 .revealPlayer{margin-top:13px;padding:16px;border:1px solid var(--line);border-radius:18px;background:#07100d}
-.revealPlayer .big{font-size:22px;font-weight:1000}.revealPlayer .meta{font-size:12px;color:var(--muted);margin-top:5px}
+.revealPlayer .big{font-size:22px;font-weight:1000;direction:ltr}.revealPlayer .meta{font-size:12px;color:var(--muted);margin-top:5px}
 .toast{
   position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:40;
   background:#102019;border:1px solid var(--line);border-radius:999px;padding:10px 15px;
@@ -791,39 +793,26 @@ button:active{transform:translateY(1px)}
 .toast.show{display:block}
 .resultHero{text-align:center;padding:25px 0 17px}.cup{font-size:70px}
 .resultHero h1{font-size:36px;color:var(--lime);margin:7px 0}
-.scoreboard{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;padding:18px}
+.scoreboard{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;padding:18px;direction:ltr}
 .team{text-align:center;min-width:0}.team b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .teamScore{font-size:40px;font-weight:1000;margin-top:5px}.dash{font-size:28px;color:var(--gold)}
-.statBox{padding:15px;margin-top:10px}.statRow{display:grid;grid-template-columns:1fr 90px 1fr;align-items:center;text-align:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.statBox{padding:15px;margin-top:10px}.statRow{display:grid;grid-template-columns:1fr 90px 1fr;align-items:center;text-align:center;padding:8px 0;border-bottom:1px solid var(--line);direction:ltr}
 .statRow:last-child{border-bottom:0}.statRow span:nth-child(2){font-size:10px;color:var(--muted);font-weight:900}
 .timeline{padding:15px;margin-top:10px}.timeline h3{margin:0 0 8px}
 .event{display:flex;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}.event:last-child{border-bottom:0}
-.minute{color:var(--lime);font-weight:1000;min-width:36px}
-.motm{padding:16px;margin-top:10px;text-align:center}.motm .star{font-size:35px}.motm b{display:block;font-size:21px;margin-top:4px}
-.pitch{
-  margin-top:10px;padding:16px 12px;border:1px solid var(--line);border-radius:23px;
-  background:
-    linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px),
-    linear-gradient(#0d3b23,#082d1b);
-  background-size:100% 25%,25% 100%,auto;min-height:390px;position:relative
-}
-.pitchRows{display:flex;flex-direction:column;justify-content:space-between;height:355px}
-.pitchRow{display:flex;justify-content:space-around;gap:5px}
-.pitchPlayer{width:82px;text-align:center;padding:7px 4px;border-radius:13px;background:rgba(5,12,8,.82);border:1px solid rgba(255,255,255,.12)}
-.pitchPlayer .povr{color:var(--gold);font-weight:1000}.pitchPlayer b{display:block;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pitchPlayer small{font-size:8px;letter-spacing:0}
+.minute{color:var(--lime);font-weight:1000;min-width:36px;direction:ltr}
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:15px}
-@media(max-width:420px){
+@media(max-width:430px){
   .brand h1{font-size:41px}.managerGrid{grid-template-columns:1fr}.managerChoice{min-height:auto}
   .playerHero{grid-template-columns:106px 1fr;gap:12px}.playerCard{height:152px}.playerCard .sil{font-size:58px}
   .playerInfo h1{font-size:23px}.quick{grid-template-columns:repeat(2,1fr)}
-  .roomHero .code{font-size:34px}.pitchPlayer{width:70px}.duelHud{grid-template-columns:1fr}
+  .roomHero .code{font-size:34px}.pitchPlayer{width:64px}.duelTimers{grid-template-columns:1fr}
 }
 </style>
 </head>
 
 <body>
+
 <div id="toast" class="toast"></div>
 
 <main class="app">
@@ -832,21 +821,24 @@ button:active{transform:translateY(1px)}
   <div class="brand">
     <div class="logo">⚽</div>
     <h1>BID <span>XI</span></h1>
-    <p>Auction. Outsmart. Win.</p>
+    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p>
   </div>
 
   <div class="card homeCard">
-    <label>YOUR NAME</label>
-    <input id="name" maxlength="18" placeholder="Player name">
+    <label>اسمك</label>
+    <input id="name" maxlength="18" placeholder="اكتب اسمك">
+    <div class="help">الاسم ده هيظهر لصاحبك داخل الغرفة وفوق ملعب تشكيلتك.</div>
 
-    <button id="createBtn" class="primary">CREATE PRIVATE BATTLE</button>
+    <button id="createBtn" class="primary">إنشاء غرفة خاصة</button>
+    <div class="help">ينشئ لك كود من 6 خانات تبعته لصاحبك علشان يدخل معاك.</div>
 
-    <div class="or">OR</div>
+    <div class="or">أو</div>
 
-    <label>ROOM CODE</label>
+    <label>كود الغرفة</label>
     <input id="joinCode" maxlength="6" placeholder="ABC123">
-    <button id="joinBtn" class="secondary">JOIN BATTLE</button>
+    <div class="help">اكتب الكود اللي صاحبك بعتهولك، وبعدها اضغط دخول.</div>
 
+    <button id="joinBtn" class="secondary">دخول الغرفة</button>
     <p id="homeError" class="error"></p>
   </div>
 </section>
@@ -854,16 +846,16 @@ button:active{transform:translateY(1px)}
 <section id="manager" class="screen">
   <div class="topbar">
     <div>
-      <small>PRIVATE BATTLE</small>
+      <small>الغرفة الخاصة</small>
       <h2 id="managerCode">------</h2>
     </div>
-    <div class="live">● LIVE</div>
+    <div class="live">● مباشر</div>
   </div>
 
   <div class="card roomHero">
-    <small>ROOM CODE</small>
+    <small>ابعت الكود لصاحبك</small>
     <div id="bigCode" class="code">------</div>
-    <p>2 players • Ultimate XI • €180M</p>
+    <p>لاعبان فقط • تشكيل 11 لاعب • ميزانية 180 مليون</p>
   </div>
 
   <div class="duel">
@@ -873,46 +865,58 @@ button:active{transform:translateY(1px)}
   </div>
 
   <div class="card managerPick">
-    <small>CHOOSE YOUR MANAGER</small>
+    <small>اختار مدير فريقك</small>
+    <div class="help">كل مدير له ميزة مختلفة تؤثر على بناء فريقك أو نتيجة المباراة.</div>
+
     <div class="managerGrid">
       <button class="managerChoice" data-manager="scout">
         <div class="icon">🔎</div>
-        <b>THE SCOUT</b>
-        <span>Mystery players get +1 OVR.</span>
+        <b>الكشاف</b>
+        <span>أي لاعب غامض تحصل عليه تزيد قوته +1 OVR.</span>
       </button>
+
       <button class="managerChoice" data-manager="tycoon">
         <div class="icon">💰</div>
-        <b>THE TYCOON</b>
-        <span>Start with +12M extra budget.</span>
+        <b>رجل الأعمال</b>
+        <span>تبدأ بميزانية 192 مليون بدل 180 مليون.</span>
       </button>
+
       <button class="managerChoice" data-manager="tactician">
         <div class="icon">🧠</div>
-        <b>THE TACTICIAN</b>
-        <span>Extra chemistry before the match.</span>
+        <b>المدرب التكتيكي</b>
+        <span>يضيف +4 كيمياء لفريقك قبل محاكاة المباراة.</span>
       </button>
     </div>
 
-    <button id="startBtn" class="primary hidden">START THE WAR</button>
+    <button id="startBtn" class="primary hidden">ابدأ حرب المزاد</button>
+    <div class="help">صاحب الغرفة فقط يقدر يبدأ بعد دخول اللاعب الثاني واختيار كل واحد لمدربه.</div>
+
     <p id="managerMessage" class="muted" style="text-align:center"></p>
   </div>
 </section>
 
 <section id="auction" class="screen">
+
   <div class="auctionHeader">
-    <div>
-      <small>ROUND</small>
+    <div class="round">
+      <small>الجولة</small>
       <b><span id="roundNo">1</span>/11</b>
     </div>
 
-    <div id="timerWrap" class="timer">
-      <b id="timer">22</b>
+    <div id="turnTimer" class="turnTimer">
+      <div class="inside">
+        <b id="timer">10</b>
+        <small>ثواني</small>
+      </div>
     </div>
 
-    <div class="right">
+    <div class="roomTag">
       <small>ROOM</small>
       <b id="auctionCode">------</b>
     </div>
   </div>
+
+  <div id="turnBanner" class="turnBanner">...</div>
 
   <div class="stage">
     <span id="position" class="pos">ST</span>
@@ -924,7 +928,7 @@ button:active{transform:translateY(1px)}
       </div>
 
       <div class="playerInfo">
-        <small>LIVE AUCTION</small>
+        <small>اللاعب المعروض الآن</small>
         <h1 id="playerName">Player</h1>
         <div id="playerMeta" class="playerMeta">🇫🇷 FRA • ST</div>
       </div>
@@ -932,9 +936,9 @@ button:active{transform:translateY(1px)}
   </div>
 
   <div class="card bidBox">
-    <div class="priceLabel">CURRENT BID</div>
+    <div class="priceLabel">السعر الحالي</div>
     <div class="price">€<span id="bid">0</span>M</div>
-    <div class="highest">Highest bidder: <b id="highest">—</b></div>
+    <div class="highest">صاحب أعلى مزايدة: <b id="highest">—</b></div>
 
     <div class="quick">
       <button data-add="1">+1M</button>
@@ -942,80 +946,77 @@ button:active{transform:translateY(1px)}
       <button data-add="5">+5M</button>
       <button data-add="10">+10M</button>
     </div>
+    <div class="help">اختار قيمة زيادة سريعة. أول ما تزايد، دورك ينتهي فورًا ويبدأ عداد خصمك من 10 ثواني.</div>
 
     <div class="custom">
-      <input id="customBid" type="number" min="0" placeholder="Custom bid">
-      <button id="customBidBtn" class="primary">BID</button>
+      <input id="customBid" type="number" min="0" placeholder="مزايدة مخصصة">
+      <button id="customBidBtn" class="primary">زايد</button>
     </div>
+    <div class="help">تقدر تكتب السعر النهائي اللي عايز توصل له بدل أزرار الزيادة السريعة.</div>
+
+    <div class="auctionActions">
+      <button id="passBtn" class="danger">اترك اللاعب</button>
+      <button id="statusBtn" disabled>الدور بيتغير تلقائيًا</button>
+    </div>
+    <div class="help"><b>اترك اللاعب:</b> لو ضغطت عليه أو عداد الـ10 ثواني خلص، اللاعب يروح لخصمك بالسعر الحالي. لو كنت صاحب أعلى مزايدة وخصمك ترك، اللاعب يروح لك.</div>
 
     <p id="bidError" class="error"></p>
   </div>
 
-  <div id="duelHud" class="duelHud"></div>
+  <div id="duelTimers" class="duelTimers"></div>
 
-  <small style="margin-top:12px">POWER CARDS</small>
-  <div id="cardTray" class="cardTray"></div>
+  <div id="pitches"></div>
+
 </section>
 
 <section id="result" class="screen">
+
   <div class="resultHero">
     <div class="cup">🏆</div>
-    <small>FULL TIME</small>
-    <h1 id="winnerName">Winner</h1>
-    <p class="muted">The stronger squad won the battle.</p>
+    <small>انتهت المباراة</small>
+    <h1 id="winnerName">الفائز</h1>
+    <p class="muted">النتيجة محسوبة من قوة التشكيلة والكيمياء مع عنصر عشوائي بسيط.</p>
   </div>
 
   <div id="scoreboard" class="card scoreboard"></div>
-
   <div id="statBox" class="card statBox"></div>
 
-  <div class="card motm">
-    <div class="star">⭐</div>
-    <small>PLAYER OF THE MATCH</small>
-    <b id="motm">—</b>
-  </div>
-
   <div class="card timeline">
-    <h3>Match Timeline</h3>
+    <h3>أحداث المباراة</h3>
     <div id="timeline"></div>
   </div>
 
-  <h3>Your Ultimate XI</h3>
-  <div id="pitch" class="pitch"></div>
+  <div id="resultPitches"></div>
 
   <div class="actions">
-    <button id="rematchBtn" class="primary">REMATCH</button>
-    <button id="homeBtn">HOME</button>
+    <button id="rematchBtn" class="primary">إعادة المباراة</button>
+    <button id="homeBtn">الصفحة الرئيسية</button>
   </div>
+
 </section>
 
 </main>
 
 <div id="roundOverlay" class="overlay">
   <div class="card reveal">
-    <div id="revealIcon" class="revealIcon">🎭</div>
-    <small id="revealEyebrow">ROUND RESULT</small>
-    <h2 id="revealTitle">Mystery reveal</h2>
+    <div id="revealIcon" class="revealIcon">✅</div>
+    <small id="revealEyebrow">نتيجة الجولة</small>
+    <h2 id="revealTitle">تم حسم اللاعب</h2>
     <p id="revealText" class="muted"></p>
     <div id="revealPlayer" class="revealPlayer"></div>
   </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+
 <script>
 (()=>{
 const socket=io();
 
 const MANAGERS={
-  scout:{name:"THE SCOUT",icon:"🔎"},
-  tycoon:{name:"THE TYCOON",icon:"💰"},
-  tactician:{name:"THE TACTICIAN",icon:"🧠"}
-};
-
-const CARDS={
-  freeze:{name:"FREEZE",icon:"❄️",desc:"Lock opponent bidding for 4s."},
-  boost:{name:"CASH BOOST",icon:"💸",desc:"+6M budget instantly."},
-  pressure:{name:"PRESSURE",icon:"🔥",desc:"+3M to current bid."}
+  scout:{name:"الكشاف",icon:"🔎"},
+  tycoon:{name:"رجل الأعمال",icon:"💰"},
+  tactician:{name:"المدرب التكتيكي",icon:"🧠"}
 };
 
 const FLAGS={
@@ -1050,6 +1051,10 @@ function fmt(n){
   return Number.isInteger(x)?String(x):x.toFixed(1);
 }
 
+function initials(name){
+  return String(name||"?").trim().slice(0,1).toUpperCase();
+}
+
 function toast(text){
   const t=$("toast");
   t.textContent=text;
@@ -1058,18 +1063,20 @@ function toast(text){
   t._timer=setTimeout(()=>t.classList.remove("show"),1800);
 }
 
-function initials(name){
-  return String(name||"?").trim().slice(0,1).toUpperCase();
-}
-
 socket.on("connect",()=>{myId=socket.id});
 
 $("createBtn").onclick=()=>{
   const name=$("name").value.trim();
-  if(!name) return $("homeError").textContent="Enter your name";
+
+  if(!name){
+    return $("homeError").textContent="اكتب اسمك الأول";
+  }
 
   socket.emit("create",{name},r=>{
-    if(!r?.ok) return $("homeError").textContent=r?.error||"Create failed";
+    if(!r?.ok){
+      return $("homeError").textContent=r?.error||"تعذر إنشاء الغرفة";
+    }
+
     code=r.code;
     $("homeError").textContent="";
     show("manager");
@@ -1081,11 +1088,14 @@ $("joinBtn").onclick=()=>{
   const room=$("joinCode").value.trim().toUpperCase();
 
   if(!name||room.length!==6){
-    return $("homeError").textContent="Enter name + 6-character code";
+    return $("homeError").textContent="اكتب اسمك وكود الغرفة المكون من 6 خانات";
   }
 
   socket.emit("join",{name,code:room},r=>{
-    if(!r?.ok) return $("homeError").textContent=r?.error||"Join failed";
+    if(!r?.ok){
+      return $("homeError").textContent=r?.error||"تعذر دخول الغرفة";
+    }
+
     code=r.code;
     $("homeError").textContent="";
     show("manager");
@@ -1094,45 +1104,61 @@ $("joinBtn").onclick=()=>{
 
 document.querySelectorAll("[data-manager]").forEach(btn=>{
   btn.onclick=()=>{
-    if(!code) return;
-
-    const manager=btn.dataset.manager;
-
-    socket.emit("choose_manager",{code,manager},r=>{
-      if(!r?.ok) return toast(r?.error||"Manager error");
-
-      document.querySelectorAll(".managerChoice").forEach(x=>x.classList.remove("selected"));
-      btn.classList.add("selected");
-      toast("Manager selected");
+    socket.emit("choose_manager",{code,manager:btn.dataset.manager},r=>{
+      if(!r?.ok) return toast(r?.error||"تعذر اختيار المدرب");
+      toast("تم اختيار المدرب");
     });
   };
 });
 
 $("startBtn").onclick=()=>{
   socket.emit("start",{code},r=>{
-    if(!r?.ok) $("managerMessage").textContent=r?.error||"Could not start";
+    if(!r?.ok){
+      $("managerMessage").textContent=r?.error||"تعذر بدء اللعبة";
+    }
   });
 };
 
-function bid(amount){
+function placeBid(amount){
   if(!Number.isFinite(amount)||amount<=0){
-    return $("bidError").textContent="Invalid bid";
+    return $("bidError").textContent="اكتب مزايدة صحيحة";
   }
 
   socket.emit("bid",{code,amount},r=>{
-    $("bidError").textContent=r?.ok?"":(r?.error||"Bid failed");
-    if(r?.ok) $("customBid").value="";
+    $("bidError").textContent=r?.ok?"":(r?.error||"فشلت المزايدة");
+
+    if(r?.ok){
+      $("customBid").value="";
+    }
   });
 }
 
 document.querySelectorAll("[data-add]").forEach(btn=>{
   btn.onclick=()=>{
     if(!state) return;
-    bid(Number(state.currentBid)+Number(btn.dataset.add));
+    placeBid(Number(state.currentBid)+Number(btn.dataset.add));
   };
 });
 
-$("customBidBtn").onclick=()=>bid(Number($("customBid").value));
+$("customBidBtn").onclick=()=>{
+  placeBid(Number($("customBid").value));
+};
+
+$("passBtn").onclick=()=>{
+  socket.emit("pass",{code},r=>{
+    if(!r?.ok){
+      $("bidError").textContent=r?.error||"تعذر ترك اللاعب";
+    }
+  });
+};
+
+$("rematchBtn").onclick=()=>{
+  socket.emit("rematch",{code},r=>{
+    if(!r?.ok) toast(r?.error||"تعذرت إعادة المباراة");
+  });
+};
+
+$("homeBtn").onclick=()=>location.reload();
 
 socket.on("state",s=>{
   state=s;
@@ -1150,21 +1176,31 @@ socket.on("state",s=>{
   }
 });
 
-socket.on("round_result",result=>showRoundResult(result));
-
-socket.on("card_event",event=>{
-  toast(event.icon+" "+event.userName+" used "+event.cardName);
+socket.on("bid_event",e=>{
+  toast(e.bidderName+" زايد إلى €"+fmt(e.amount)+"M");
 });
 
-socket.on("match_result",result=>{
-  match=result;
+socket.on("pass_event",e=>{
+  if(e.reason==="timeout"){
+    toast("انتهى وقت "+e.playerName);
+  }else{
+    toast(e.playerName+" ترك اللاعب");
+  }
+});
+
+socket.on("round_result",r=>{
+  showRoundResult(r);
+});
+
+socket.on("match_result",r=>{
+  match=r;
   show("result");
-  renderResult(result);
+  renderResult(r);
 });
 
 function managerBox(player,hostId){
   if(!player){
-    return '<div class="avatar">?</div><b>Waiting...</b><small>INVITE FRIEND</small>';
+    return '<div class="avatar">?</div><b>في انتظار اللاعب...</b><small>ابعت له كود الغرفة</small>';
   }
 
   const m=player.manager?MANAGERS[player.manager]:null;
@@ -1172,7 +1208,7 @@ function managerBox(player,hostId){
   return (
     '<div class="avatar">'+esc(initials(player.name))+'</div>'+
     '<b>'+esc(player.name)+'</b>'+
-    '<small>'+(player.id===hostId?"HOST":"CHALLENGER")+(m?" • "+m.icon+" "+m.name:"")+'</small>'
+    '<small>'+(player.id===hostId?"صاحب الغرفة":"المنافس")+(m?" • "+m.icon+" "+m.name:"")+'</small>'
   );
 }
 
@@ -1184,11 +1220,10 @@ function renderManager(s){
   $("rightManager").innerHTML=managerBox(s.players[1],s.hostId);
 
   const me=s.players.find(p=>p.id===myId);
-  if(me?.manager){
-    document.querySelectorAll(".managerChoice").forEach(x=>{
-      x.classList.toggle("selected",x.dataset.manager===me.manager);
-    });
-  }
+
+  document.querySelectorAll(".managerChoice").forEach(x=>{
+    x.classList.toggle("selected",x.dataset.manager===me?.manager);
+  });
 
   const host=s.hostId===myId;
   $("startBtn").classList.toggle("hidden",!host);
@@ -1197,15 +1232,15 @@ function renderManager(s){
 
   $("managerMessage").textContent=
     host
-      ? (allReady?"Both managers ready 🔥":"Waiting for both manager choices...")
-      : "Waiting for the host...";
+      ? (allReady?"جاهزين 🔥 اضغط ابدأ حرب المزاد":"في انتظار دخول صاحبك واختيار المدربين...")
+      : "في انتظار صاحب الغرفة يبدأ...";
 }
 
 function renderAuction(s){
   $("roundNo").textContent=Math.min(s.round+1,11);
   $("auctionCode").textContent=s.code;
   $("timer").textContent=s.seconds;
-  $("timerWrap").style.setProperty("--deg",(Math.max(0,Math.min(22,s.seconds))/22*360)+"deg");
+  $("turnTimer").style.setProperty("--deg",(Math.max(0,Math.min(10,s.seconds))/10*360)+"deg");
 
   if(s.current){
     $("position").textContent=s.current.pos;
@@ -1217,77 +1252,118 @@ function renderAuction(s){
   $("bid").textContent=fmt(s.currentBid);
 
   const highest=s.players.find(p=>p.id===s.highestBidder);
-  $("highest").textContent=highest?highest.name:"—";
+  $("highest").textContent=highest?highest.name:"لا يوجد";
 
-  $("duelHud").innerHTML=s.players.map(p=>{
-    const max=p.manager==="tycoon"?192:180;
-    const pct=Math.max(0,Math.min(100,p.budget/max*100));
-    const frozen=Date.now()<(p.frozenUntil||0);
+  const turnPlayer=s.players.find(p=>p.id===s.turnPlayerId);
+  const mine=s.turnPlayerId===myId;
 
+  $("turnBanner").className="turnBanner "+(mine?"mine":"theirs");
+  $("turnBanner").textContent=
+    mine
+      ? "🔥 دورك الآن — عندك 10 ثواني: زايد أو اترك اللاعب"
+      : "⏳ دور "+(turnPlayer?.name||"خصمك")+" — انتظر قراره";
+
+  document.querySelectorAll("[data-add]").forEach(btn=>btn.disabled=!mine);
+  $("customBid").disabled=!mine;
+  $("customBidBtn").disabled=!mine;
+  $("passBtn").disabled=!mine;
+
+  $("duelTimers").innerHTML=s.players.map(p=>{
+    const active=p.id===s.turnPlayerId;
     return (
-      '<div class="card hud '+(p.id===myId?"you":"")+'">'+
-        '<div class="hudTop">'+
-          '<b>'+esc(p.name)+(p.id===myId?" • YOU":"")+'</b>'+
+      '<div class="card playerTimer '+(active?"activeTurn":"")+'">'+
+        '<div class="ptop">'+
+          '<b>'+esc(p.name)+(p.id===myId?" • أنت":"")+'</b>'+
           '<span class="money">€'+fmt(p.budget)+'M</span>'+
         '</div>'+
-        '<div class="bar"><div style="width:'+pct+'%"></div></div>'+
-        '<div class="hudBottom">'+
-          '<span>'+p.squad.length+'/11 players</span>'+
-          '<span>'+(frozen?"❄️ FROZEN":(p.id===s.highestBidder?"🔥 LEADING":""))+'</span>'+
+        '<div class="pstatus">'+
+          (active
+            ? '⏱️ دوره الآن: '+s.seconds+' ثواني'
+            : '⌛ منتظر دوره')+
+          ' • التشكيلة '+p.squad.length+'/11'+
         '</div>'+
       '</div>'
     );
   }).join("");
 
-  const me=s.players.find(p=>p.id===myId);
-  $("cardTray").innerHTML=(me?.cards||[]).map(card=>{
-    const c=CARDS[card];
-    const used=me.usedCards.includes(card);
-
-    return (
-      '<button class="powerCard '+(used?"used":"")+'" data-card="'+card+'" '+(used?"disabled":"")+'>'+
-        '<div class="ci">'+c.icon+'</div>'+
-        '<b>'+c.name+'</b>'+
-        '<span>'+c.desc+'</span>'+
-      '</button>'
-    );
-  }).join("");
-
-  document.querySelectorAll("[data-card]").forEach(btn=>{
-    btn.onclick=()=>{
-      socket.emit("use_card",{code,card:btn.dataset.card},r=>{
-        if(!r?.ok) toast(r?.error||"Card failed");
-      });
-    };
-  });
+  renderLivePitches(s.players);
 }
 
 function showRoundResult(r){
-  const mine=r.mystery.find(x=>x.userId===myId);
-  const won=r.winnerId===myId;
+  const mine=r.winnerId===myId;
 
-  if(won){
-    $("revealIcon").textContent="🔥";
-    $("revealEyebrow").textContent="AUCTION WON";
-    $("revealTitle").textContent="You signed "+r.auctionPlayer.name;
-    $("revealText").textContent="Winning price: €"+fmt(r.price)+"M";
-    $("revealPlayer").innerHTML=
-      '<div class="big">'+esc(r.auctionPlayer.name)+'</div>'+
-      '<div class="meta">'+r.auctionPlayer.ovr+' OVR • '+r.auctionPlayer.pos+'</div>';
-  }else if(mine){
-    $("revealIcon").textContent="🎭";
-    $("revealEyebrow").textContent="MYSTERY PLAYER";
-    $("revealTitle").textContent="Your fallback signing";
-    $("revealText").textContent=r.winnerName?esc(r.winnerName)+" won the auction.":"Nobody won the auction.";
-    $("revealPlayer").innerHTML=
-      '<div class="big">'+esc(mine.player.name)+'</div>'+
-      '<div class="meta">'+mine.player.ovr+' OVR • '+mine.player.pos+' • FREE</div>';
+  $("revealIcon").textContent=mine?"✅":"⚔️";
+  $("revealEyebrow").textContent="نتيجة الجولة";
+
+  if(mine){
+    $("revealTitle").textContent="اللاعب دخل تشكيلتك";
+    $("revealText").textContent=
+      r.price>0
+        ? "كسبت اللاعب مقابل €"+fmt(r.price)+"M"
+        : "حصلت على لاعب بديل مجاني بسبب الميزانية.";
   }else{
-    return;
+    $("revealTitle").textContent=r.winnerName+" كسب اللاعب";
+    $("revealText").textContent=
+      r.reason==="timeout"
+        ? "الـ10 ثواني انتهت قبل ما تتصرف."
+        : "تم ترك اللاعب في دورك.";
   }
 
+  $("revealPlayer").innerHTML=
+    '<div class="big">'+esc(r.player.name)+'</div>'+
+    '<div class="meta">'+r.player.ovr+' OVR • '+r.player.pos+(r.mystery?" • لاعب غامض":"")+'</div>';
+
   $("roundOverlay").classList.add("show");
-  setTimeout(()=>$("roundOverlay").classList.remove("show"),2250);
+  setTimeout(()=>$("roundOverlay").classList.remove("show"),2100);
+}
+
+function playerCardHtml(p){
+  if(!p){
+    return '<div class="pitchPlayer"><div class="povr">—</div><b>EMPTY</b><small>—</small></div>';
+  }
+
+  return (
+    '<div class="pitchPlayer">'+
+      '<div class="povr">'+p.ovr+'</div>'+
+      '<b>'+esc(p.name)+'</b>'+
+      '<small>'+p.pos+'</small>'+
+    '</div>'
+  );
+}
+
+function pitchHtml(user,title){
+  const by={};
+
+  for(const p of user.squad){
+    if(!by[p.pos]) by[p.pos]=[];
+    by[p.pos].push(p);
+  }
+
+  const take=pos=>by[pos]?.shift()||null;
+
+  return (
+    '<div class="pitchSection">'+
+      '<div class="pitchTitle"><b>'+esc(title)+'</b><span class="muted">'+esc(user.name)+' • €'+fmt(user.budget)+'M</span></div>'+
+      '<div class="pitch">'+
+        '<div class="pitchRows">'+
+          '<div class="pitchRow">'+playerCardHtml(take("LW"))+playerCardHtml(take("ST"))+playerCardHtml(take("RW"))+'</div>'+
+          '<div class="pitchRow">'+playerCardHtml(take("CAM"))+'</div>'+
+          '<div class="pitchRow">'+playerCardHtml(take("CM"))+playerCardHtml(take("CM"))+'</div>'+
+          '<div class="pitchRow">'+playerCardHtml(take("LB"))+playerCardHtml(take("CB"))+playerCardHtml(take("CB"))+playerCardHtml(take("RB"))+'</div>'+
+          '<div class="pitchRow">'+playerCardHtml(take("GK"))+'</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>'
+  );
+}
+
+function renderLivePitches(players){
+  const me=players.find(p=>p.id===myId);
+  const opp=players.find(p=>p.id!==myId);
+
+  $("pitches").innerHTML=
+    (me?pitchHtml(me,"🏟️ ملعبي"):"")+
+    (opp?pitchHtml(opp,"🏟️ ملعب الخصم"):"");
 }
 
 function statRow(label,a,b){
@@ -1297,8 +1373,11 @@ function statRow(label,a,b){
 function renderResult(r){
   $("winnerName").textContent=r.winnerName;
 
-  const a=r.teams[0],b=r.teams[1];
-  const ga=r.score[a.id]??0,gb=r.score[b.id]??0;
+  const a=r.teams[0];
+  const b=r.teams[1];
+
+  const ga=r.score[a.id]??0;
+  const gb=r.score[b.id]??0;
 
   $("scoreboard").innerHTML=
     '<div class="team"><b>'+esc(a.name)+'</b><small>AVG '+a.avg+' • CHEM '+a.chem+'</small><div class="teamScore">'+ga+'</div></div>'+
@@ -1306,67 +1385,36 @@ function renderResult(r){
     '<div class="team"><b>'+esc(b.name)+'</b><small>AVG '+b.avg+' • CHEM '+b.chem+'</small><div class="teamScore">'+gb+'</div></div>';
 
   $("statBox").innerHTML=
-    statRow("POSSESSION",r.stats.possession[a.id]+"%",r.stats.possession[b.id]+"%")+
-    statRow("SHOTS",r.stats.shots[a.id],r.stats.shots[b.id])+
+    statRow("الاستحواذ",r.stats.possession[a.id]+"%",r.stats.possession[b.id]+"%")+
+    statRow("التسديدات",r.stats.shots[a.id],r.stats.shots[b.id])+
     statRow("xG",r.stats.xg[a.id],r.stats.xg[b.id])+
-    statRow("TEAM AVG",a.avg,b.avg)+
-    statRow("CHEMISTRY",a.chem,b.chem);
-
-  $("motm").textContent=r.motm;
+    statRow("متوسط الفريق",a.avg,b.avg)+
+    statRow("الكيمياء",a.chem,b.chem);
 
   $("timeline").innerHTML=r.events.map(e=>{
     const icon=e.type==="goal"?"⚽":(e.icon||"•");
+
+    const type=
+      e.type==="goal"?"هدف":
+      e.type==="save"?"تصدي":
+      e.type==="yellow"?"بطاقة صفراء":
+      "فرصة خطيرة";
+
     return (
       '<div class="event">'+
         '<div class="minute">'+e.minute+"'</div>"+
-        '<div><b>'+icon+" "+esc(e.player)+'</b><br><span class="muted">'+esc(e.teamName)+" • "+e.type.toUpperCase()+'</span></div>'+
+        '<div><b>'+icon+" "+esc(e.player)+'</b><br><span class="muted">'+esc(e.teamName)+" • "+type+'</span></div>'+
       '</div>'
     );
   }).join("");
 
   const me=r.teams.find(t=>t.id===myId);
-  renderPitch(me?.squad||[]);
+  const opp=r.teams.find(t=>t.id!==myId);
+
+  $("resultPitches").innerHTML=
+    (me?pitchHtml({...me,budget:0},"🏟️ تشكيلتي النهائية"):"")+
+    (opp?pitchHtml({...opp,budget:0},"🏟️ تشكيلة الخصم"):"");
 }
-
-function renderPitch(squad){
-  const byPos={};
-  squad.forEach(p=>{
-    if(!byPos[p.pos]) byPos[p.pos]=[];
-    byPos[p.pos].push(p);
-  });
-
-  function pop(pos){
-    return byPos[pos]?.shift()||null;
-  }
-
-  function pp(p){
-    if(!p) return '<div class="pitchPlayer"><div class="povr">—</div><b>EMPTY</b><small>—</small></div>';
-    return (
-      '<div class="pitchPlayer">'+
-        '<div class="povr">'+p.ovr+'</div>'+
-        '<b>'+esc(p.name)+'</b>'+
-        '<small>'+p.pos+(p.mystery?" • M":"")+'</small>'+
-      '</div>'
-    );
-  }
-
-  $("pitch").innerHTML=
-    '<div class="pitchRows">'+
-      '<div class="pitchRow">'+pp(pop("LW"))+pp(pop("ST"))+pp(pop("RW"))+'</div>'+
-      '<div class="pitchRow">'+pp(pop("CAM"))+'</div>'+
-      '<div class="pitchRow">'+pp(pop("CM"))+pp(pop("CM"))+'</div>'+
-      '<div class="pitchRow">'+pp(pop("LB"))+pp(pop("CB"))+pp(pop("CB"))+pp(pop("RB"))+'</div>'+
-      '<div class="pitchRow">'+pp(pop("GK"))+'</div>'+
-    '</div>';
-}
-
-$("rematchBtn").onclick=()=>{
-  socket.emit("rematch",{code},r=>{
-    if(!r?.ok) toast(r?.error||"Rematch failed");
-  });
-};
-
-$("homeBtn").onclick=()=>location.reload();
 
 })();
 </script>
@@ -1377,5 +1425,5 @@ $("homeBtn").onclick=()=>location.reload();
 app.get("/",(req,res)=>res.type("html").send(PAGE));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V3 running on port "+PORT);
+  console.log("BID XI V4 AR running on port "+PORT);
 });
