@@ -207,7 +207,8 @@ function publicUser(u){
     picture:u.picture || "",
     manager:u.manager,
     budget:u.budget,
-    squad:u.squad
+    squad:u.squad,
+    lastMystery:u.lastMystery || null
   };
 }
 
@@ -223,6 +224,7 @@ function publicRoom(room){
     highestBidder:room.highestBidder,
     turnPlayerId:room.turnPlayerId,
     seconds:room.seconds,
+    rematchRequest:room.rematchRequest || null,
     players:[...room.users.values()].map(publicUser)
   };
 }
@@ -263,6 +265,62 @@ function otherUser(room,userId){
   return [...room.users.values()].find(u=>u.id!==userId) || null;
 }
 
+function resetRoomToManager(room){
+  if(room.turnTimer) clearInterval(room.turnTimer);
+
+  room.phase="manager";
+  room.round=0;
+  room.current=null;
+  room.currentBid=0;
+  room.highestBidder=null;
+  room.turnPlayerId=null;
+  room.seconds=0;
+  room.result=null;
+  room.used=new Set();
+  room.rematchRequest=null;
+
+  for(const u of room.users.values()){
+    u.manager=null;
+    u.budget=180;
+    u.squad=[];
+    u.lastMystery=null;
+  }
+}
+
+function removePlayerFromRoom(socket,room){
+  if(!room || !room.users.has(socket.id)) return;
+
+  room.users.delete(socket.id);
+  socket.leave(room.code);
+
+  if(room.hostId===socket.id){
+    room.hostId=room.users.keys().next().value || null;
+  }
+
+  room.rematchRequest=null;
+
+  if(room.users.size===0){
+    if(room.turnTimer) clearInterval(room.turnTimer);
+    rooms.delete(room.code);
+    return;
+  }
+
+  // لو حد خرج أثناء اللعب، نرجع الباقي للروم بدل ما اللعبة تفضل معلقة.
+  if(room.phase==="auction" || room.phase==="result"){
+    resetRoomToManager(room);
+  }
+
+  emitRoom(room);
+}
+
+function removeSocketFromAllRooms(socket){
+  for(const room of rooms.values()){
+    if(room.users.has(socket.id)){
+      removePlayerFromRoom(socket,room);
+    }
+  }
+}
+
 function setTurn(room,userId){
   room.turnPlayerId=userId;
   room.seconds=10;
@@ -288,9 +346,12 @@ function startAuction(room){
   room.round=0;
   room.used=new Set();
 
+  room.rematchRequest=null;
+
   for(const u of room.users.values()){
     u.budget=180+(u.manager==="tycoon"?12:0);
     u.squad=[];
+    u.lastMystery=null;
   }
 
   nextRound(room);
@@ -396,6 +457,7 @@ function awardCurrentPlayer(room,winner,reason){
     }
 
     loser.squad.push(loserPlayer);
+    loser.lastMystery=loserPlayer;
     if(loserPlayer?.id) room.used.add(loserPlayer.id);
   }
 
@@ -685,7 +747,8 @@ io.on("connection",socket=>{
       users:new Map(),
       used:new Set(),
       turnTimer:null,
-      result:null
+      result:null,
+      rematchRequest:null
     };
 
     const googleUser=socket.data.googleUser;
@@ -701,7 +764,8 @@ io.on("connection",socket=>{
       picture:googleUser.picture,
       manager:null,
       budget:180,
-      squad:[]
+      squad:[],
+      lastMystery:null
     });
 
     rooms.set(code,room);
@@ -736,7 +800,8 @@ io.on("connection",socket=>{
       picture:googleUser.picture,
       manager:null,
       budget:180,
-      squad:[]
+      squad:[],
+      lastMystery:null
     });
 
     socket.join(code);
@@ -828,49 +893,103 @@ io.on("connection",socket=>{
     cb?.({ok:true});
   });
 
-  socket.on("rematch",({code},cb)=>{
+  socket.on("request_rematch",({code},cb)=>{
     const room=rooms.get(code);
+    const user=room?.users.get(socket.id);
 
-    if(!room) return cb?.({ok:false,error:"الغرفة غير موجودة"});
-    if(room.users.size!==2) return cb?.({ok:false,error:"لازم اللاعبان يكونوا موجودين"});
-
-    room.phase="manager";
-    room.round=0;
-    room.current=null;
-    room.currentBid=0;
-    room.highestBidder=null;
-    room.turnPlayerId=null;
-    room.seconds=0;
-    room.result=null;
-
-    for(const u of room.users.values()){
-      u.manager=null;
-      u.budget=180;
-      u.squad=[];
+    if(!room || !user){
+      return cb?.({ok:false,error:"الغرفة غير موجودة"});
     }
 
+    if(room.phase!=="result"){
+      return cb?.({ok:false,error:"إعادة المباراة متاحة بعد نهاية المباراة"});
+    }
+
+    if(room.users.size!==2){
+      return cb?.({ok:false,error:"لازم اللاعبان يكونوا موجودين"});
+    }
+
+    if(room.rematchRequest){
+      if(room.rematchRequest.requesterId===socket.id){
+        return cb?.({ok:true,waiting:true});
+      }
+      return cb?.({ok:false,error:"خصمك بعت طلب إعادة مباراة بالفعل — وافق أو ارفض"});
+    }
+
+    room.rematchRequest={
+      requesterId:socket.id,
+      requesterName:user.name
+    };
+
+    io.to(room.code).emit("rematch_request",{
+      requesterId:user.id,
+      requesterName:user.name
+    });
+
     emitRoom(room);
+    cb?.({ok:true,waiting:true});
+  });
+
+  socket.on("respond_rematch",({code,accept},cb)=>{
+    const room=rooms.get(code);
+    const user=room?.users.get(socket.id);
+
+    if(!room || !user){
+      return cb?.({ok:false,error:"الغرفة غير موجودة"});
+    }
+
+    const request=room.rematchRequest;
+
+    if(!request){
+      return cb?.({ok:false,error:"لا يوجد طلب إعادة مباراة"});
+    }
+
+    if(request.requesterId===socket.id){
+      return cb?.({ok:false,error:"لا يمكنك قبول طلبك أنت"});
+    }
+
+    if(!accept){
+      room.rematchRequest=null;
+
+      io.to(room.code).emit("rematch_declined",{
+        byId:user.id,
+        byName:user.name
+      });
+
+      emitRoom(room);
+      return cb?.({ok:true,accepted:false});
+    }
+
+    if(room.users.size!==2){
+      room.rematchRequest=null;
+      emitRoom(room);
+      return cb?.({ok:false,error:"اللاعب الثاني غير موجود"});
+    }
+
+    resetRoomToManager(room);
+
+    io.to(room.code).emit("rematch_accepted",{
+      byId:user.id,
+      byName:user.name
+    });
+
+    emitRoom(room);
+    cb?.({ok:true,accepted:true});
+  });
+
+  socket.on("leave_room",(_,cb)=>{
+    removeSocketFromAllRooms(socket);
+    cb?.({ok:true});
+  });
+
+  socket.on("logout",(_,cb)=>{
+    removeSocketFromAllRooms(socket);
+    socket.data.googleUser=null;
     cb?.({ok:true});
   });
 
   socket.on("disconnect",()=>{
-    for(const [code,room] of rooms.entries()){
-
-      if(!room.users.has(socket.id)) continue;
-
-      room.users.delete(socket.id);
-
-      if(room.hostId===socket.id){
-        room.hostId=room.users.keys().next().value || null;
-      }
-
-      if(room.users.size===0){
-        if(room.turnTimer) clearInterval(room.turnTimer);
-        rooms.delete(code);
-      }else{
-        emitRoom(room);
-      }
-    }
+    removeSocketFromAllRooms(socket);
   });
 });
 
@@ -885,7 +1004,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V7 — حرب المزاد</title>
+<title>BID XI V8 — حرب المزاد</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1025,6 +1144,33 @@ button:active:not(:disabled){transform:translateY(1px)}
 .ptop{display:flex;justify-content:space-between;gap:8px;font-size:12px}
 .ptop b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.money{color:var(--gold);font-weight:1000}
 .pstatus{margin-top:8px;font-size:11px;color:var(--muted)}
+.mysteryHud{
+  display:grid;grid-template-columns:48px 1fr;gap:9px;align-items:center;
+  padding:8px;margin-bottom:9px;border-radius:14px;
+  border:1px solid rgba(166,136,255,.32);
+  background:linear-gradient(135deg,rgba(166,136,255,.11),rgba(67,244,125,.04));
+  text-align:right
+}
+.mysteryHud.empty{grid-template-columns:1fr;text-align:center;color:var(--muted);font-size:10px}
+.mysteryHudPhoto{width:48px;height:48px;border-radius:12px;border:1px solid rgba(255,255,255,.12)}
+.mysteryHud small{font-size:8px;color:#c7b8ff}
+.mysteryHud b{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:right}
+.mysteryHud span{display:block;color:var(--gold);font-size:9px;font-weight:900;margin-top:2px}
+.roundRevealGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.roundRevealCard{padding:10px;border:1px solid var(--line);border-radius:16px;background:#09130f;min-width:0}
+.roundRevealCard .revealPhoto{width:94px;height:94px}
+.roundRevealCard b{display:block;font-size:11px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr}
+.roundRevealCard span{font-size:9px;color:var(--muted)}
+.rematchPanel{
+  margin-top:12px;padding:15px;border:1px solid rgba(67,244,125,.30);
+  border-radius:18px;background:rgba(67,244,125,.05);text-align:center
+}
+.rematchPanel h3{margin:0 0 5px;font-size:15px}
+.rematchPanel p{margin:0 0 12px;color:var(--muted);font-size:11px}
+.rematchPanelActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.utilityActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 14px}
+.utilityActions button{min-height:42px;font-size:11px}
+.logoutBtn{border-color:rgba(255,99,112,.42);color:#ff9ba4;background:rgba(255,99,112,.07)}
 .pitchSection{
   margin-top:24px;
   margin-bottom:44px;
@@ -1087,12 +1233,13 @@ button:active:not(:disabled){transform:translateY(1px)}
 .timeline{padding:15px;margin-top:10px}.timeline h3{margin:0 0 8px}
 .event{display:flex;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}.event:last-child{border-bottom:0}
 .minute{color:var(--lime);font-weight:1000;min-width:36px;direction:ltr}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:15px}
+.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:15px}
 @media(max-width:430px){
   .brand h1{font-size:41px}.managerGrid{grid-template-columns:1fr}.managerChoice{min-height:auto}
   .playerHero{grid-template-columns:106px 1fr;gap:12px}.playerCard{height:152px}.playerCard .sil{font-size:58px}
   .playerInfo h1{font-size:23px}.quick{grid-template-columns:repeat(2,1fr)}
   .roomHero .code{font-size:34px}.pitchPlayer{width:64px}.duelTimers{grid-template-columns:1fr}
+  .actions{grid-template-columns:1fr}.roundRevealGrid{grid-template-columns:1fr 1fr}
 }
 </style>
 </head>
@@ -1128,6 +1275,7 @@ button:active:not(:disabled){transform:translateY(1px)}
     <div id="gameEntry" class="gameEntry">
       <div class="authActions">
         <button id="changeGoogleBtn" type="button">تغيير حساب Google</button>
+        <button type="button" class="logoutBtn" data-logout>تسجيل خروج</button>
       </div>
 
       <div class="nicknameBox">
@@ -1171,6 +1319,11 @@ button:active:not(:disabled){transform:translateY(1px)}
     <div id="leftManager" class="card managerMini"></div>
     <div class="vs">VS</div>
     <div id="rightManager" class="card managerMini"></div>
+  </div>
+
+  <div class="utilityActions">
+    <button type="button" data-home>الرئيسية</button>
+    <button type="button" class="logoutBtn" data-logout>تسجيل خروج</button>
   </div>
 
   <div class="card managerPick">
@@ -1297,9 +1450,19 @@ button:active:not(:disabled){transform:translateY(1px)}
 
   <div id="resultPitches"></div>
 
+  <div id="rematchPanel" class="rematchPanel hidden">
+    <h3 id="rematchTitle">طلب إعادة مباراة</h3>
+    <p id="rematchText"></p>
+    <div id="rematchDecision" class="rematchPanelActions hidden">
+      <button id="acceptRematchBtn" class="primary">قبول ✅</button>
+      <button id="declineRematchBtn" class="danger">رفض ❌</button>
+    </div>
+  </div>
+
   <div class="actions">
-    <button id="rematchBtn" class="primary">إعادة المباراة</button>
-    <button id="homeBtn">الصفحة الرئيسية</button>
+    <button id="rematchBtn" class="primary">طلب إعادة مباراة</button>
+    <button id="homeBtn">الرئيسية</button>
+    <button type="button" class="logoutBtn" data-logout>تسجيل خروج</button>
   </div>
 
 </section>
@@ -1714,13 +1877,79 @@ $("passBtn").onclick=()=>{
   });
 };
 
+function resetLocalRoomState(){
+  code=null;
+  state=null;
+  match=null;
+  $("joinCode").value="";
+}
+
+function goHomeKeepingGoogle(){
+  socket.emit("leave_room",{},()=>{
+    resetLocalRoomState();
+    show("home");
+    if(googleUser){
+      $("authState").classList.add("show");
+      $("gameEntry").classList.add("show");
+      $("googleButton").style.display="none";
+    }
+  });
+}
+
+function performLogout(){
+  socket.emit("logout",{},()=>{
+    resetLocalRoomState();
+
+    googleUser=null;
+    googleCredential="";
+
+    $("authState").classList.remove("show");
+    $("gameEntry").classList.remove("show");
+    $("googleButton").style.display="flex";
+    $("googleButton").innerHTML="";
+    $("googleButton").dataset.rendered="0";
+    $("homeError").textContent="تم تسجيل الخروج. اختار حساب Google للدخول مرة أخرى.";
+
+    try{
+      google.accounts.id.disableAutoSelect();
+    }catch(e){}
+
+    show("home");
+    renderGoogleButton();
+  });
+}
+
+document.querySelectorAll("[data-home]").forEach(btn=>{
+  btn.addEventListener("click",goHomeKeepingGoogle);
+});
+
+document.querySelectorAll("[data-logout]").forEach(btn=>{
+  btn.addEventListener("click",performLogout);
+});
+
+$("homeBtn").onclick=goHomeKeepingGoogle;
+
 $("rematchBtn").onclick=()=>{
-  socket.emit("rematch",{code},r=>{
-    if(!r?.ok) toast(r?.error||"تعذرت إعادة المباراة");
+  socket.emit("request_rematch",{code},r=>{
+    if(!r?.ok){
+      return toast(r?.error||"تعذر إرسال طلب إعادة المباراة");
+    }
+    toast("تم إرسال طلب إعادة المباراة");
   });
 };
 
-$("homeBtn").onclick=()=>location.reload();
+$("acceptRematchBtn").onclick=()=>{
+  socket.emit("respond_rematch",{code,accept:true},r=>{
+    if(!r?.ok) toast(r?.error||"تعذر قبول إعادة المباراة");
+  });
+};
+
+$("declineRematchBtn").onclick=()=>{
+  socket.emit("respond_rematch",{code,accept:false},r=>{
+    if(!r?.ok) return toast(r?.error||"تعذر رفض الطلب");
+    toast("تم رفض إعادة المباراة");
+  });
+};
 
 socket.on("state",s=>{
   state=s;
@@ -1735,6 +1964,7 @@ socket.on("state",s=>{
   }else if(s.phase==="result"){
     show("result");
     if(match) renderResult(match);
+    renderRematchState(s);
   }
 });
 
@@ -1754,10 +1984,25 @@ socket.on("round_result",r=>{
   showRoundResult(r);
 });
 
+socket.on("rematch_request",e=>{
+  if(e.requesterId!==myId){
+    toast(e.requesterName+" طلب إعادة المباراة");
+  }
+});
+
+socket.on("rematch_declined",e=>{
+  toast(e.byName+" رفض إعادة المباراة");
+});
+
+socket.on("rematch_accepted",()=>{
+  toast("تم قبول إعادة المباراة — رجعنا للروم");
+});
+
 socket.on("match_result",r=>{
   match=r;
   show("result");
   renderResult(r);
+  if(state) renderRematchState(state);
 });
 
 function managerBox(player,hostId){
@@ -1838,8 +2083,23 @@ function renderAuction(s){
 
   $("duelTimers").innerHTML=s.players.map(p=>{
     const active=p.id===s.turnPlayerId;
+
+    const mystery=p.lastMystery
+      ? (
+        '<div class="mysteryHud">'+
+          playerPhotoHtml(p.lastMystery,"mysteryHudPhoto")+
+          '<div>'+
+            '<small>🎲 آخر لاعب عشوائي — ظاهر للطرفين</small>'+
+            '<b>'+esc(p.lastMystery.name)+'</b>'+
+            '<span>'+p.lastMystery.ovr+' OVR • '+p.lastMystery.pos+'</span>'+
+          '</div>'+
+        '</div>'
+      )
+      : '<div class="mysteryHud empty">🎲 لا يوجد لاعب عشوائي حتى الآن</div>';
+
     return (
       '<div class="card playerTimer '+(active?"activeTurn":"")+'">'+
+        mystery+
         '<div class="ptop">'+
           '<b>'+esc(p.name)+(p.id===myId?" • أنت":"")+'</b>'+
           '<span class="money">€'+fmt(p.budget)+'M</span>'+
@@ -1854,45 +2114,52 @@ function renderAuction(s){
     );
   }).join("");
 
+  hydratePlayerImages($("duelTimers"));
   renderLivePitches(s.players);
 }
 
 function showRoundResult(r){
-  const iWon=r.winnerId===myId;
-  const iLost=r.loserId===myId;
+  const winnerPlayer=r.winnerPlayer;
+  const randomPlayer=r.loserReward?.player || null;
 
-  let myPlayer=null;
+  $("revealIcon").textContent="👀";
+  $("revealEyebrow").textContent="نتيجة الجولة — ظاهرة للطرفين";
+  $("revealTitle").textContent="اللاعبان اتكشفوا";
+  $("revealText").textContent=
+    r.winnerName+
+    " كسب اللاعب المعروض"+
+    (r.price>0 ? " مقابل €"+fmt(r.price)+"M" : "")+
+    (r.loserName ? "، و"+r.loserName+" حصل على لاعب عشوائي مختلف مجانًا." : ".");
 
-  $("revealEyebrow").textContent="نتيجة الجولة";
+  const winnerCard=winnerPlayer
+    ? (
+      '<div class="roundRevealCard">'+
+        '<small>🏆 '+esc(r.winnerName)+' — اللاعب المعروض</small>'+
+        playerPhotoHtml(winnerPlayer,"revealPhoto")+
+        '<b>'+esc(winnerPlayer.name)+'</b>'+
+        '<span>'+winnerPlayer.ovr+' OVR • '+winnerPlayer.pos+'</span>'+
+      '</div>'
+    )
+    : "";
 
-  if(iWon){
-    myPlayer=r.winnerPlayer;
-    $("revealIcon").textContent="✅";
-    $("revealTitle").textContent="اللاعب المعروض دخل تشكيلتك";
-    $("revealText").textContent=
-      r.price>0
-        ? "كسبت "+r.auctionPlayer.name+" مقابل €"+fmt(r.price)+"M. خصمك حصل على لاعب عشوائي مختلف."
-        : "حصلت على لاعب بديل مجاني بسبب الميزانية.";
-  }else if(iLost && r.loserReward){
-    myPlayer=r.loserReward.player;
-    $("revealIcon").textContent="🎲";
-    $("revealTitle").textContent="وصلك لاعب عشوائي مختلف";
-    $("revealText").textContent=
-      r.winnerName+" كسب "+r.auctionPlayer.name+
-      "، وأنت حصلت مجانًا على لاعب مختلف من نفس المركز.";
-  }else{
-    return;
-  }
+  const mysteryCard=randomPlayer
+    ? (
+      '<div class="roundRevealCard">'+
+        '<small>🎲 '+esc(r.loserName)+' — اللاعب العشوائي</small>'+
+        playerPhotoHtml(randomPlayer,"revealPhoto")+
+        '<b>'+esc(randomPlayer.name)+'</b>'+
+        '<span>'+randomPlayer.ovr+' OVR • '+randomPlayer.pos+'</span>'+
+      '</div>'
+    )
+    : "";
 
   $("revealPlayer").innerHTML=
-    playerPhotoHtml(myPlayer,"revealPhoto")+
-    '<div class="big">'+esc(myPlayer.name)+'</div>'+
-    '<div class="meta">'+myPlayer.ovr+' OVR • '+myPlayer.pos+(myPlayer.mystery?" • لاعب عشوائي":"")+'</div>';
+    '<div class="roundRevealGrid">'+winnerCard+mysteryCard+'</div>';
 
   hydratePlayerImages($("revealPlayer"));
 
   $("roundOverlay").classList.add("show");
-  setTimeout(()=>$("roundOverlay").classList.remove("show"),2500);
+  setTimeout(()=>$("roundOverlay").classList.remove("show"),3200);
 }
 
 function playerCardHtml(p){
@@ -1949,6 +2216,40 @@ function renderLivePitches(players){
 
 function statRow(label,a,b){
   return '<div class="statRow"><b>'+a+'</b><span>'+label+'</span><b>'+b+'</b></div>';
+}
+
+function renderRematchState(s){
+  const panel=$("rematchPanel");
+  const decision=$("rematchDecision");
+  const button=$("rematchBtn");
+  const title=$("rematchTitle");
+  const text=$("rematchText");
+
+  const request=s?.rematchRequest || null;
+
+  if(!request){
+    panel.classList.add("hidden");
+    decision.classList.add("hidden");
+    button.disabled=false;
+    button.textContent="طلب إعادة مباراة";
+    return;
+  }
+
+  panel.classList.remove("hidden");
+
+  if(request.requesterId===myId){
+    title.textContent="تم إرسال الطلب ⏳";
+    text.textContent="في انتظار موافقة خصمك. أول ما يقبل هترجعوا لنفس الروم لاختيار المدربين وبدء مباراة جديدة.";
+    decision.classList.add("hidden");
+    button.disabled=true;
+    button.textContent="في انتظار موافقة الخصم...";
+  }else{
+    title.textContent=request.requesterName+" يريد إعادة المباراة";
+    text.textContent="لو وافقت، هترجعوا أنتم الاتنين لنفس الروم وتبدأوا من جديد.";
+    decision.classList.remove("hidden");
+    button.disabled=true;
+    button.textContent="خصمك طلب إعادة المباراة";
+  }
 }
 
 function renderResult(r){
@@ -2008,7 +2309,7 @@ function renderResult(r){
 app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V7 Mega Pool running on port "+PORT);
+  console.log("BID XI V8 Rematch & Mystery running on port "+PORT);
   if(!GOOGLE_CLIENT_ID){
     console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
   }
