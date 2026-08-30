@@ -20,54 +20,148 @@ const FORMATION = [
 ];
 
 const PLAYER_POOL = [
-  {id:1,name:"Thibaut Courtois",pos:"GK",ovr:90,nation:"BEL",base:10},
-  {id:2,name:"Alisson",pos:"GK",ovr:89,nation:"BRA",base:9},
-  {id:3,name:"Ederson",pos:"GK",ovr:88,nation:"BRA",base:8},
-  {id:4,name:"Donnarumma",pos:"GK",ovr:89,nation:"ITA",base:9},
-
-  {id:5,name:"Theo Hernandez",pos:"LB",ovr:88,nation:"FRA",base:10},
-  {id:6,name:"Alphonso Davies",pos:"LB",ovr:87,nation:"CAN",base:9},
-  {id:7,name:"Nuno Mendes",pos:"LB",ovr:87,nation:"POR",base:9},
-
-  {id:8,name:"William Saliba",pos:"CB",ovr:89,nation:"FRA",base:11},
-  {id:9,name:"Virgil van Dijk",pos:"CB",ovr:90,nation:"NED",base:12},
-  {id:10,name:"Antonio Rudiger",pos:"CB",ovr:88,nation:"GER",base:9},
-  {id:11,name:"Ruben Dias",pos:"CB",ovr:89,nation:"POR",base:10},
-  {id:12,name:"Bastoni",pos:"CB",ovr:88,nation:"ITA",base:9},
-  {id:13,name:"Marquinhos",pos:"CB",ovr:87,nation:"BRA",base:8},
-
-  {id:14,name:"Achraf Hakimi",pos:"RB",ovr:89,nation:"MAR",base:11},
-  {id:15,name:"Trent Alexander-Arnold",pos:"RB",ovr:88,nation:"ENG",base:10},
-  {id:16,name:"Jules Kounde",pos:"RB",ovr:87,nation:"FRA",base:9},
-
-  {id:17,name:"Rodri",pos:"CM",ovr:91,nation:"ESP",base:14},
-  {id:18,name:"Jude Bellingham",pos:"CM",ovr:92,nation:"ENG",base:16},
-  {id:19,name:"Federico Valverde",pos:"CM",ovr:90,nation:"URU",base:13},
-  {id:20,name:"Pedri",pos:"CM",ovr:89,nation:"ESP",base:12},
-  {id:21,name:"Vitinha",pos:"CM",ovr:89,nation:"POR",base:12},
-  {id:22,name:"Declan Rice",pos:"CM",ovr:89,nation:"ENG",base:12},
-  {id:23,name:"Frenkie de Jong",pos:"CM",ovr:88,nation:"NED",base:11},
-
-  {id:24,name:"Florian Wirtz",pos:"CAM",ovr:90,nation:"GER",base:14},
-  {id:25,name:"Jamal Musiala",pos:"CAM",ovr:90,nation:"GER",base:14},
-  {id:26,name:"Cole Palmer",pos:"CAM",ovr:89,nation:"ENG",base:13},
-  {id:27,name:"Bruno Fernandes",pos:"CAM",ovr:88,nation:"POR",base:11},
-
-  {id:28,name:"Vinicius Junior",pos:"LW",ovr:92,nation:"BRA",base:18},
-  {id:29,name:"Khvicha Kvaratskhelia",pos:"LW",ovr:89,nation:"GEO",base:13},
-  {id:30,name:"Rafael Leao",pos:"LW",ovr:88,nation:"POR",base:12},
-  {id:31,name:"Luis Diaz",pos:"LW",ovr:87,nation:"COL",base:10},
-
-  {id:32,name:"Kylian Mbappe",pos:"ST",ovr:93,nation:"FRA",base:20},
-  {id:33,name:"Erling Haaland",pos:"ST",ovr:92,nation:"NOR",base:19},
-  {id:34,name:"Harry Kane",pos:"ST",ovr:91,nation:"ENG",base:17},
-  {id:35,name:"Lautaro Martinez",pos:"ST",ovr:90,nation:"ARG",base:15},
-  {id:36,name:"Alexander Isak",pos:"ST",ovr:89,nation:"SWE",base:14},
-
-  {id:37,name:"Mohamed Salah",pos:"RW",ovr:92,nation:"EGY",base:18},
-  {id:38,name:"Lamine Yamal",pos:"RW",ovr:91,nation:"ESP",base:17},
-  {id:39,name:"Bukayo Saka",pos:"RW",ovr:90,nation:"ENG",base:15},
-  {id:40,name:"Rodrygo",pos:"RW",ovr:88,nation:"BRA",base:12}
+  {id:1,name:"Gianluigi Donnarumma",pos:"GK",ovr:91,nation:"ITA",base:12},
+  {id:2,name:"Thibaut Courtois",pos:"GK",ovr:90,nation:"BEL",base:11},
+  {id:3,name:"Alisson Becker",pos:"GK",ovr:90,nation:"BRA",base:11},
+  {id:4,name:"Ederson",pos:"GK",ovr:88,nation:"BRA",base:9},
+  {id:5,name:"Mike Maignan",pos:"GK",ovr:88,nation:"FRA",base:9},
+  {id:6,name:"Jan Oblak",pos:"GK",ovr:88,nation:"SLO",base:9},
+  {id:7,name:"Emiliano Martinez",pos:"GK",ovr:88,nation:"ARG",base:9},
+  {id:8,name:"David Raya",pos:"GK",ovr:87,nation:"ESP",base:8},
+  {id:9,name:"Diogo Costa",pos:"GK",ovr:87,nation:"POR",base:8},
+  {id:10,name:"Gregor Kobel",pos:"GK",ovr:87,nation:"SUI",base:8},
+  {id:11,name:"Unai Simon",pos:"GK",ovr:86,nation:"ESP",base:7},
+  {id:12,name:"Marc-Andre ter Stegen",pos:"GK",ovr:88,nation:"GER",base:9},
+  {id:13,name:"Theo Hernandez",pos:"LB",ovr:89,nation:"FRA",base:12},
+  {id:14,name:"Alphonso Davies",pos:"LB",ovr:88,nation:"CAN",base:11},
+  {id:15,name:"Nuno Mendes",pos:"LB",ovr:88,nation:"POR",base:11},
+  {id:16,name:"Alejandro Balde",pos:"LB",ovr:86,nation:"ESP",base:8},
+  {id:17,name:"Federico Dimarco",pos:"LB",ovr:87,nation:"ITA",base:9},
+  {id:18,name:"Destiny Udogie",pos:"LB",ovr:85,nation:"ITA",base:7},
+  {id:19,name:"Milos Kerkez",pos:"LB",ovr:85,nation:"HUN",base:7},
+  {id:20,name:"Pervis Estupinan",pos:"LB",ovr:84,nation:"ECU",base:6},
+  {id:21,name:"Andrew Robertson",pos:"LB",ovr:86,nation:"SCO",base:8},
+  {id:22,name:"Alejandro Grimaldo",pos:"LB",ovr:87,nation:"ESP",base:9},
+  {id:23,name:"Riccardo Calafiori",pos:"LB",ovr:86,nation:"ITA",base:8},
+  {id:24,name:"Ferland Mendy",pos:"LB",ovr:86,nation:"FRA",base:8},
+  {id:25,name:"Virgil van Dijk",pos:"CB",ovr:91,nation:"NED",base:14},
+  {id:26,name:"William Saliba",pos:"CB",ovr:90,nation:"FRA",base:13},
+  {id:27,name:"Ruben Dias",pos:"CB",ovr:89,nation:"POR",base:12},
+  {id:28,name:"Antonio Rudiger",pos:"CB",ovr:89,nation:"GER",base:12},
+  {id:29,name:"Alessandro Bastoni",pos:"CB",ovr:89,nation:"ITA",base:12},
+  {id:30,name:"Marquinhos",pos:"CB",ovr:87,nation:"BRA",base:9},
+  {id:31,name:"Gabriel Magalhaes",pos:"CB",ovr:89,nation:"BRA",base:12},
+  {id:32,name:"Ronald Araujo",pos:"CB",ovr:88,nation:"URU",base:11},
+  {id:33,name:"Eder Militao",pos:"CB",ovr:88,nation:"BRA",base:11},
+  {id:34,name:"Pau Cubarsi",pos:"CB",ovr:87,nation:"ESP",base:10},
+  {id:35,name:"Ibrahima Konate",pos:"CB",ovr:87,nation:"FRA",base:10},
+  {id:36,name:"Dayot Upamecano",pos:"CB",ovr:86,nation:"FRA",base:9},
+  {id:37,name:"Jonathan Tah",pos:"CB",ovr:86,nation:"GER",base:9},
+  {id:38,name:"Kim Min-jae",pos:"CB",ovr:86,nation:"KOR",base:9},
+  {id:39,name:"Matthijs de Ligt",pos:"CB",ovr:86,nation:"NED",base:9},
+  {id:40,name:"Cristian Romero",pos:"CB",ovr:87,nation:"ARG",base:10},
+  {id:41,name:"Bremer",pos:"CB",ovr:87,nation:"BRA",base:10},
+  {id:42,name:"Lisandro Martinez",pos:"CB",ovr:86,nation:"ARG",base:9},
+  {id:43,name:"Levi Colwill",pos:"CB",ovr:85,nation:"ENG",base:8},
+  {id:44,name:"Murillo",pos:"CB",ovr:85,nation:"BRA",base:8},
+  {id:45,name:"Dean Huijsen",pos:"CB",ovr:86,nation:"ESP",base:9},
+  {id:46,name:"Jarrad Branthwaite",pos:"CB",ovr:85,nation:"ENG",base:8},
+  {id:47,name:"Achraf Hakimi",pos:"RB",ovr:90,nation:"MAR",base:13},
+  {id:48,name:"Trent Alexander-Arnold",pos:"RB",ovr:89,nation:"ENG",base:12},
+  {id:49,name:"Jules Kounde",pos:"RB",ovr:88,nation:"FRA",base:11},
+  {id:50,name:"Dani Carvajal",pos:"RB",ovr:87,nation:"ESP",base:10},
+  {id:51,name:"Jeremie Frimpong",pos:"RB",ovr:88,nation:"NED",base:11},
+  {id:52,name:"Pedro Porro",pos:"RB",ovr:86,nation:"ESP",base:9},
+  {id:53,name:"Reece James",pos:"RB",ovr:86,nation:"ENG",base:9},
+  {id:54,name:"Ben White",pos:"RB",ovr:86,nation:"ENG",base:9},
+  {id:55,name:"Diogo Dalot",pos:"RB",ovr:85,nation:"POR",base:8},
+  {id:56,name:"Malo Gusto",pos:"RB",ovr:84,nation:"FRA",base:7},
+  {id:57,name:"Tino Livramento",pos:"RB",ovr:84,nation:"ENG",base:7},
+  {id:58,name:"Denzel Dumfries",pos:"RB",ovr:86,nation:"NED",base:9},
+  {id:59,name:"Jude Bellingham",pos:"CM",ovr:93,nation:"ENG",base:19},
+  {id:60,name:"Rodri",pos:"CM",ovr:92,nation:"ESP",base:18},
+  {id:61,name:"Federico Valverde",pos:"CM",ovr:91,nation:"URU",base:16},
+  {id:62,name:"Pedri",pos:"CM",ovr:91,nation:"ESP",base:16},
+  {id:63,name:"Vitinha",pos:"CM",ovr:90,nation:"POR",base:15},
+  {id:64,name:"Declan Rice",pos:"CM",ovr:90,nation:"ENG",base:15},
+  {id:65,name:"Frenkie de Jong",pos:"CM",ovr:89,nation:"NED",base:13},
+  {id:66,name:"Alexis Mac Allister",pos:"CM",ovr:89,nation:"ARG",base:13},
+  {id:67,name:"Martin Odegaard",pos:"CM",ovr:90,nation:"NOR",base:15},
+  {id:68,name:"Nicolo Barella",pos:"CM",ovr:89,nation:"ITA",base:13},
+  {id:69,name:"Bruno Guimaraes",pos:"CM",ovr:88,nation:"BRA",base:12},
+  {id:70,name:"Enzo Fernandez",pos:"CM",ovr:88,nation:"ARG",base:12},
+  {id:71,name:"Eduardo Camavinga",pos:"CM",ovr:88,nation:"FRA",base:12},
+  {id:72,name:"Aurelien Tchouameni",pos:"CM",ovr:88,nation:"FRA",base:12},
+  {id:73,name:"Joao Neves",pos:"CM",ovr:88,nation:"POR",base:12},
+  {id:74,name:"Ryan Gravenberch",pos:"CM",ovr:87,nation:"NED",base:11},
+  {id:75,name:"Tijjani Reijnders",pos:"CM",ovr:87,nation:"NED",base:11},
+  {id:76,name:"Joshua Kimmich",pos:"CM",ovr:89,nation:"GER",base:13},
+  {id:77,name:"Kevin De Bruyne",pos:"CM",ovr:90,nation:"BEL",base:15},
+  {id:78,name:"Ilkay Gundogan",pos:"CM",ovr:86,nation:"GER",base:9},
+  {id:79,name:"Sandro Tonali",pos:"CM",ovr:87,nation:"ITA",base:11},
+  {id:80,name:"Moises Caicedo",pos:"CM",ovr:88,nation:"ECU",base:12},
+  {id:81,name:"Kobbie Mainoo",pos:"CM",ovr:85,nation:"ENG",base:9},
+  {id:82,name:"Gavi",pos:"CM",ovr:88,nation:"ESP",base:12},
+  {id:83,name:"Florian Wirtz",pos:"CAM",ovr:92,nation:"GER",base:18},
+  {id:84,name:"Jamal Musiala",pos:"CAM",ovr:92,nation:"GER",base:18},
+  {id:85,name:"Cole Palmer",pos:"CAM",ovr:91,nation:"ENG",base:17},
+  {id:86,name:"Bruno Fernandes",pos:"CAM",ovr:89,nation:"POR",base:14},
+  {id:87,name:"Dani Olmo",pos:"CAM",ovr:89,nation:"ESP",base:14},
+  {id:88,name:"Xavi Simons",pos:"CAM",ovr:88,nation:"NED",base:13},
+  {id:89,name:"Morgan Gibbs-White",pos:"CAM",ovr:86,nation:"ENG",base:10},
+  {id:90,name:"James Maddison",pos:"CAM",ovr:86,nation:"ENG",base:10},
+  {id:91,name:"Paulo Dybala",pos:"CAM",ovr:88,nation:"ARG",base:13},
+  {id:92,name:"Christopher Nkunku",pos:"CAM",ovr:87,nation:"FRA",base:12},
+  {id:93,name:"Rayan Cherki",pos:"CAM",ovr:87,nation:"FRA",base:12},
+  {id:94,name:"Eberechi Eze",pos:"CAM",ovr:87,nation:"ENG",base:12},
+  {id:95,name:"Vinicius Junior",pos:"LW",ovr:93,nation:"BRA",base:20},
+  {id:96,name:"Khvicha Kvaratskhelia",pos:"LW",ovr:90,nation:"GEO",base:15},
+  {id:97,name:"Rafael Leao",pos:"LW",ovr:89,nation:"POR",base:14},
+  {id:98,name:"Luis Diaz",pos:"LW",ovr:89,nation:"COL",base:14},
+  {id:99,name:"Nico Williams",pos:"LW",ovr:88,nation:"ESP",base:13},
+  {id:100,name:"Bradley Barcola",pos:"LW",ovr:88,nation:"FRA",base:13},
+  {id:101,name:"Cody Gakpo",pos:"LW",ovr:87,nation:"NED",base:12},
+  {id:102,name:"Gabriel Martinelli",pos:"LW",ovr:87,nation:"BRA",base:12},
+  {id:103,name:"Anthony Gordon",pos:"LW",ovr:86,nation:"ENG",base:11},
+  {id:104,name:"Kaoru Mitoma",pos:"LW",ovr:86,nation:"JPN",base:11},
+  {id:105,name:"Jack Grealish",pos:"LW",ovr:86,nation:"ENG",base:11},
+  {id:106,name:"Marcus Rashford",pos:"LW",ovr:86,nation:"ENG",base:11},
+  {id:107,name:"Kylian Mbappe",pos:"ST",ovr:94,nation:"FRA",base:22},
+  {id:108,name:"Erling Haaland",pos:"ST",ovr:93,nation:"NOR",base:21},
+  {id:109,name:"Harry Kane",pos:"ST",ovr:92,nation:"ENG",base:19},
+  {id:110,name:"Lautaro Martinez",pos:"ST",ovr:91,nation:"ARG",base:18},
+  {id:111,name:"Alexander Isak",pos:"ST",ovr:91,nation:"SWE",base:18},
+  {id:112,name:"Victor Osimhen",pos:"ST",ovr:90,nation:"NGA",base:16},
+  {id:113,name:"Julian Alvarez",pos:"ST",ovr:90,nation:"ARG",base:16},
+  {id:114,name:"Robert Lewandowski",pos:"ST",ovr:90,nation:"POL",base:16},
+  {id:115,name:"Viktor Gyokeres",pos:"ST",ovr:90,nation:"SWE",base:16},
+  {id:116,name:"Ollie Watkins",pos:"ST",ovr:88,nation:"ENG",base:13},
+  {id:117,name:"Benjamin Sesko",pos:"ST",ovr:87,nation:"SLO",base:12},
+  {id:118,name:"Darwin Nunez",pos:"ST",ovr:87,nation:"URU",base:12},
+  {id:119,name:"Dusan Vlahovic",pos:"ST",ovr:88,nation:"SRB",base:13},
+  {id:120,name:"Marcus Thuram",pos:"ST",ovr:88,nation:"FRA",base:13},
+  {id:121,name:"Serhou Guirassy",pos:"ST",ovr:88,nation:"GUI",base:13},
+  {id:122,name:"Lois Openda",pos:"ST",ovr:87,nation:"BEL",base:12},
+  {id:123,name:"Hugo Ekitike",pos:"ST",ovr:86,nation:"FRA",base:11},
+  {id:124,name:"Santiago Gimenez",pos:"ST",ovr:86,nation:"MEX",base:11},
+  {id:125,name:"Rasmus Hojlund",pos:"ST",ovr:85,nation:"DEN",base:10},
+  {id:126,name:"Jonathan David",pos:"ST",ovr:87,nation:"CAN",base:12},
+  {id:127,name:"Dominic Solanke",pos:"ST",ovr:86,nation:"ENG",base:11},
+  {id:128,name:"Mateo Retegui",pos:"ST",ovr:87,nation:"ITA",base:12},
+  {id:129,name:"Mohamed Salah",pos:"RW",ovr:93,nation:"EGY",base:21},
+  {id:130,name:"Lamine Yamal",pos:"RW",ovr:93,nation:"ESP",base:21},
+  {id:131,name:"Bukayo Saka",pos:"RW",ovr:91,nation:"ENG",base:18},
+  {id:132,name:"Rodrygo",pos:"RW",ovr:89,nation:"BRA",base:15},
+  {id:133,name:"Ousmane Dembele",pos:"RW",ovr:91,nation:"FRA",base:18},
+  {id:134,name:"Michael Olise",pos:"RW",ovr:89,nation:"FRA",base:15},
+  {id:135,name:"Raphinha",pos:"RW",ovr:90,nation:"BRA",base:16},
+  {id:136,name:"Takefusa Kubo",pos:"RW",ovr:87,nation:"JPN",base:12},
+  {id:137,name:"Johan Bakayoko",pos:"RW",ovr:86,nation:"BEL",base:11},
+  {id:138,name:"Bryan Mbeumo",pos:"RW",ovr:87,nation:"CMR",base:12},
+  {id:139,name:"Savinho",pos:"RW",ovr:86,nation:"BRA",base:11},
+  {id:140,name:"Pedro Neto",pos:"RW",ovr:86,nation:"POR",base:11},
+  {id:141,name:"Antony",pos:"RW",ovr:84,nation:"BRA",base:9},
+  {id:142,name:"Noni Madueke",pos:"RW",ovr:86,nation:"ENG",base:11}
 ];
 
 const MANAGERS = {
@@ -79,7 +173,10 @@ const MANAGERS = {
 const FLAGS={
   BEL:"🇧🇪",BRA:"🇧🇷",ITA:"🇮🇹",FRA:"🇫🇷",CAN:"🇨🇦",POR:"🇵🇹",
   NED:"🇳🇱",GER:"🇩🇪",MAR:"🇲🇦",ENG:"🏴",ESP:"🇪🇸",URU:"🇺🇾",
-  GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬"
+  GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬",
+  SLO:"🇸🇮",SUI:"🇨🇭",HUN:"🇭🇺",ECU:"🇪🇨",SCO:"🏴",KOR:"🇰🇷",
+  JPN:"🇯🇵",NGA:"🇳🇬",POL:"🇵🇱",SRB:"🇷🇸",GUI:"🇬🇳",MEX:"🇲🇽",
+  DEN:"🇩🇰",CMR:"🇨🇲"
 };
 
 const rooms=new Map();
@@ -91,6 +188,16 @@ function makeCode(){
   let s="";
   for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
   return s;
+}
+
+function cleanDisplayName(value,fallback="Player"){
+  const name=String(value||"")
+    .replace(/[<>]/g,"")
+    .replace(/\s+/g," ")
+    .trim()
+    .slice(0,18);
+
+  return name || String(fallback||"Player").slice(0,18);
 }
 
 function publicUser(u){
@@ -289,7 +396,7 @@ function awardCurrentPlayer(room,winner,reason){
     }
 
     loser.squad.push(loserPlayer);
-    room.used.add(loserPlayer.id);
+    if(loserPlayer?.id) room.used.add(loserPlayer.id);
   }
 
   io.to(room.code).emit("round_result",{
@@ -561,7 +668,7 @@ io.on("connection",socket=>{
     }
   });
 
-  socket.on("create",(_,cb)=>{
+  socket.on("create",({displayName}={},cb)=>{
     let code;
     do{code=makeCode();}while(rooms.has(code));
 
@@ -590,7 +697,7 @@ io.on("connection",socket=>{
     room.users.set(socket.id,{
       id:socket.id,
       googleSub:googleUser.sub,
-      name:googleUser.name,
+      name:cleanDisplayName(displayName,googleUser.name),
       picture:googleUser.picture,
       manager:null,
       budget:180,
@@ -604,7 +711,7 @@ io.on("connection",socket=>{
     emitRoom(room);
   });
 
-  socket.on("join",({code},cb)=>{
+  socket.on("join",({code,displayName},cb)=>{
     code=String(code||"").trim().toUpperCase();
 
     const room=rooms.get(code);
@@ -625,7 +732,7 @@ io.on("connection",socket=>{
     room.users.set(socket.id,{
       id:socket.id,
       googleSub:googleUser.sub,
-      name:googleUser.name,
+      name:cleanDisplayName(displayName,googleUser.name),
       picture:googleUser.picture,
       manager:null,
       budget:180,
@@ -778,7 +885,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI — حرب المزاد</title>
+<title>BID XI V7 — حرب المزاد</title>
 
 <style>
 *{box-sizing:border-box}
@@ -820,6 +927,10 @@ button{cursor:pointer}
 .authInfo{min-width:0;flex:1}
 .authInfo b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .authInfo span{display:block;color:var(--muted);font-size:10px;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.authActions{display:flex;gap:8px;align-items:center;margin:0 0 14px}
+.authActions button{min-height:40px;font-size:11px;flex:1}
+.nicknameBox{margin:4px 0 14px;padding:12px;border:1px solid var(--line);border-radius:16px;background:#09130f}
+.nicknameBox input{margin:7px 0 5px}
 .gameEntry{display:none}.gameEntry.show{display:block}
 .googleHint{text-align:center;color:var(--muted);font-size:11px;line-height:1.5;margin-bottom:8px}
 label,small{display:block;color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.03em}
@@ -914,21 +1025,39 @@ button:active:not(:disabled){transform:translateY(1px)}
 .ptop{display:flex;justify-content:space-between;gap:8px;font-size:12px}
 .ptop b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.money{color:var(--gold);font-weight:1000}
 .pstatus{margin-top:8px;font-size:11px;color:var(--muted)}
-.pitchSection{margin-top:13px}
-.pitchTitle{display:flex;justify-content:space-between;align-items:center;margin:0 2px 7px}
+.pitchSection{
+  margin-top:24px;
+  margin-bottom:44px;
+  position:relative;
+  clear:both;
+}
+.pitchSection + .pitchSection{margin-top:52px}
+.pitchTitle{
+  display:flex;justify-content:space-between;align-items:center;
+  gap:10px;margin:0 4px 10px;min-height:24px
+}
 .pitch{
-  padding:13px 8px;border:1px solid var(--line);border-radius:23px;
+  padding:20px 10px;border:1px solid var(--line);border-radius:23px;
+  overflow:hidden;position:relative;
   background:
     linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
     linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px),
     linear-gradient(#0d3b23,#082d1b);
-  background-size:100% 25%,25% 100%,auto;min-height:320px
+  background-size:100% 25%,25% 100%,auto;
+  min-height:470px
 }
-.pitchRows{display:flex;flex-direction:column;justify-content:space-between;height:294px}
-.pitchRow{display:flex;justify-content:space-around;gap:4px;direction:ltr}
+.pitchRows{
+  display:flex;flex-direction:column;justify-content:space-between;
+  gap:18px;min-height:428px;height:auto
+}
+.pitchRow{
+  display:flex;justify-content:space-around;align-items:center;
+  gap:6px;direction:ltr;min-height:72px;flex:none
+}
 .pitchPlayer{
-  width:73px;text-align:center;padding:6px 3px;border-radius:12px;
-  background:rgba(5,12,8,.84);border:1px solid rgba(255,255,255,.12)
+  width:73px;min-height:66px;text-align:center;padding:6px 3px;border-radius:12px;
+  background:rgba(5,12,8,.84);border:1px solid rgba(255,255,255,.12);
+  flex:0 0 auto
 }
 .pitchPlayer .povr{color:var(--gold);font-weight:1000;font-size:12px}
 .pitchPlayer b{display:block;font-size:8px;direction:ltr;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -978,14 +1107,15 @@ button:active:not(:disabled){transform:translateY(1px)}
   <div class="brand">
     <div class="logo">⚽</div>
     <h1>BID <span>XI</span></h1>
-    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p>
+    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">أكثر من 142 لاعب داخل قاعدة اللعبة</small>
   </div>
 
   <div class="card homeCard">
     <small>تسجيل الدخول</small>
-    <div class="googleHint">سجّل بحساب Google مرة واحدة. اسمك وصورتك هيتاخدوا تلقائيًا من الحساب.</div>
+    <div class="googleHint">اضغط زر Google وسيظهر لك اختيار حسابات Google المسجّل دخولها في المتصفح. اختار الحساب فقط؛ اللعبة لا تطلب منك كتابة الإيميل يدويًا.</div>
 
     <div id="googleButton" class="googleWrap"></div>
+    <div class="help" style="text-align:center">لو عندك أكتر من حساب Google مسجّل في المتصفح، Google هيعرضهم لك للاختيار. مش مطلوب تكتب الإيميل داخل اللعبة.</div>
 
     <div id="authState" class="authState">
       <img id="authAvatar" class="authAvatar" alt="">
@@ -996,14 +1126,24 @@ button:active:not(:disabled){transform:translateY(1px)}
     </div>
 
     <div id="gameEntry" class="gameEntry">
+      <div class="authActions">
+        <button id="changeGoogleBtn" type="button">تغيير حساب Google</button>
+      </div>
+
+      <div class="nicknameBox">
+        <label>اسمك داخل اللعبة</label>
+        <input id="displayName" maxlength="18" placeholder="اسم اللاعب">
+        <div class="help">هنحط اسم حساب Google تلقائيًا، لكن تقدر تغيره لأي اسم تحبه قبل دخول اللعبة.</div>
+      </div>
+
       <button id="createBtn" class="primary">إنشاء غرفة خاصة</button>
-      <div class="help">اسمك هيكون اسم حساب Google تلقائيًا، ومش هتكتب أي اسم يدوي.</div>
+      <div class="help">مش محتاج تكتب إيميل أو باسورد داخل اللعبة. Google هو اللي بيختار الحساب.</div>
 
       <div class="or">أو</div>
 
       <label>كود الغرفة</label>
       <input id="joinCode" maxlength="6" placeholder="ABC123">
-      <div class="help">لو صاحبك أنشأ الغرفة، كل اللي عليك تكتبه هو كود الغرفة فقط.</div>
+      <div class="help">صاحبك يسجل بحسابه من Google، وبعدها يكتب كود الغرفة فقط.</div>
 
       <button id="joinBtn" class="secondary">دخول الغرفة</button>
     </div>
@@ -1194,7 +1334,10 @@ const MANAGERS={
 const FLAGS={
   BEL:"🇧🇪",BRA:"🇧🇷",ITA:"🇮🇹",FRA:"🇫🇷",CAN:"🇨🇦",POR:"🇵🇹",
   NED:"🇳🇱",GER:"🇩🇪",MAR:"🇲🇦",ENG:"🏴",ESP:"🇪🇸",URU:"🇺🇾",
-  GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬"
+  GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬",
+  SLO:"🇸🇮",SUI:"🇨🇭",HUN:"🇭🇺",ECU:"🇪🇨",SCO:"🏴",KOR:"🇰🇷",
+  JPN:"🇯🇵",NGA:"🇳🇬",POL:"🇵🇱",SRB:"🇷🇸",GUI:"🇬🇳",MEX:"🇲🇽",
+  DEN:"🇩🇰",CMR:"🇨🇲"
 };
 
 const WIKI_TITLES={
@@ -1244,7 +1387,7 @@ async function getPlayerImage(name){
 
   const title=wikiTitleFor(name);
 
-  const promise=fetch(
+  const directUrl=
     "https://en.wikipedia.org/w/api.php"+
     "?action=query"+
     "&format=json"+
@@ -1252,14 +1395,39 @@ async function getPlayerImage(name){
     "&prop=pageimages"+
     "&piprop=thumbnail"+
     "&pithumbsize=500"+
-    "&titles="+encodeURIComponent(title)
-  )
+    "&titles="+encodeURIComponent(title);
+
+  const searchUrl=
+    "https://en.wikipedia.org/w/api.php"+
+    "?action=query"+
+    "&format=json"+
+    "&origin=*"+
+    "&generator=search"+
+    "&gsrsearch="+encodeURIComponent(name+" footballer")+
+    "&gsrlimit=1"+
+    "&prop=pageimages"+
+    "&piprop=thumbnail"+
+    "&pithumbsize=500";
+
+  const promise=fetch(directUrl)
     .then(r=>r.ok?r.json():null)
     .then(data=>{
       const pages=data?.query?.pages;
       if(!pages) return null;
       const page=Object.values(pages)[0];
       return page?.thumbnail?.source || null;
+    })
+    .then(url=>{
+      if(url) return url;
+
+      return fetch(searchUrl)
+        .then(r=>r.ok?r.json():null)
+        .then(data=>{
+          const pages=data?.query?.pages;
+          if(!pages) return null;
+          const page=Object.values(pages)[0];
+          return page?.thumbnail?.source || null;
+        });
     })
     .catch(()=>null);
 
@@ -1310,7 +1478,7 @@ let code=null;
 let state=null;
 let match=null;
 let googleUser=null;
-let googleCredential=sessionStorage.getItem("bidXiGoogleCredential") || "";
+let googleCredential="";
 
 const $=id=>document.getElementById(id);
 
@@ -1351,6 +1519,7 @@ function renderSignedInUser(user){
   $("authEmail").textContent=user.email||"";
   $("authAvatar").src=user.picture||"";
   $("authAvatar").style.display=user.picture?"block":"none";
+  $("displayName").value=user.name||"";
   $("authState").classList.add("show");
   $("gameEntry").classList.add("show");
   $("googleButton").style.display="none";
@@ -1362,8 +1531,7 @@ function authWithServer(credential){
 
   socket.emit("google_auth",{credential},r=>{
     if(!r?.ok){
-      sessionStorage.removeItem("bidXiGoogleCredential");
-      googleCredential="";
+          googleCredential="";
       googleUser=null;
       $("authState").classList.remove("show");
       $("gameEntry").classList.remove("show");
@@ -1374,7 +1542,6 @@ function authWithServer(credential){
     }
 
     googleCredential=credential;
-    sessionStorage.setItem("bidXiGoogleCredential",credential);
     renderSignedInUser(r.user);
   });
 }
@@ -1430,19 +1597,39 @@ window.onGoogleLibraryLoad=()=>{
 socket.on("connect",()=>{
   myId=socket.id;
 
-  if(googleCredential){
+  if(googleCredential && googleUser){
     authWithServer(googleCredential);
   }else{
     renderGoogleButton();
   }
 });
 
+$("changeGoogleBtn").onclick=()=>{
+  googleUser=null;
+  googleCredential="";
+
+  $("authState").classList.remove("show");
+  $("gameEntry").classList.remove("show");
+  $("googleButton").style.display="flex";
+  $("googleButton").innerHTML="";
+  $("googleButton").dataset.rendered="0";
+  $("homeError").textContent="اختار حساب Google من القائمة.";
+
+  try{
+    google.accounts.id.disableAutoSelect();
+  }catch(e){}
+
+  renderGoogleButton();
+};
+
 $("createBtn").onclick=()=>{
   if(!googleUser){
     return $("homeError").textContent="سجّل دخول بحساب Google الأول";
   }
 
-  socket.emit("create",{},r=>{
+  const displayName=$("displayName").value.trim();
+
+  socket.emit("create",{displayName},r=>{
     if(!r?.ok){
       return $("homeError").textContent=r?.error||"تعذر إنشاء الغرفة";
     }
@@ -1464,7 +1651,9 @@ $("joinBtn").onclick=()=>{
     return $("homeError").textContent="اكتب كود الغرفة المكون من 6 خانات";
   }
 
-  socket.emit("join",{code:room},r=>{
+  const displayName=$("displayName").value.trim();
+
+  socket.emit("join",{code:room,displayName},r=>{
     if(!r?.ok){
       return $("homeError").textContent=r?.error||"تعذر دخول الغرفة";
     }
@@ -1819,7 +2008,7 @@ function renderResult(r){
 app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V6.1 Google Login running on port "+PORT);
+  console.log("BID XI V7 Mega Pool running on port "+PORT);
   if(!GOOGLE_CLIENT_ID){
     console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
   }
