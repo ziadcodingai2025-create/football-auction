@@ -128,9 +128,24 @@ function choosePlayer(pos,used){
   return pool[Math.floor(Math.random()*pool.length)];
 }
 
-function mysteryPlayer(pos,exclude){
-  let pool=PLAYER_POOL.filter(p=>p.pos===pos&&!exclude.has(p.id));
-  if(!pool.length) pool=PLAYER_POOL.filter(p=>p.pos===pos);
+function mysteryPlayer(pos,exclude=new Set(),forbidden=new Set()){
+  let pool=PLAYER_POOL.filter(p=>
+    p.pos===pos &&
+    !exclude.has(p.id) &&
+    !forbidden.has(p.id)
+  );
+
+  if(!pool.length){
+    pool=PLAYER_POOL.filter(p=>
+      p.pos===pos &&
+      !forbidden.has(p.id)
+    );
+  }
+
+  if(!pool.length){
+    pool=PLAYER_POOL.filter(p=>p.pos===pos);
+  }
+
   const p=pool[Math.floor(Math.random()*pool.length)];
   return {...p,price:0,mystery:true};
 }
@@ -204,7 +219,6 @@ function awardCurrentPlayer(room,winner,reason){
   if(room.turnTimer) clearInterval(room.turnTimer);
 
   if(!winner){
-    // Fallback only if something unexpected happened.
     room.round++;
     room.current=null;
     room.currentBid=0;
@@ -216,37 +230,81 @@ function awardCurrentPlayer(room,winner,reason){
     return;
   }
 
-  let finalPrice=room.currentBid;
+  const loser=otherUser(room,winner.id);
+  const auctionPlayer=room.current;
+  const forbiddenForWinner=new Set([auctionPlayer.id]);
 
-  if(finalPrice>winner.budget){
-    // If the winner cannot afford the current price, give a free mystery player instead.
-    const exclude=new Set(winner.squad.map(x=>x.id).filter(x=>typeof x.id==="number"));
-    let m=mysteryPlayer(room.current.pos,exclude);
-    if(winner.manager==="scout") m={...m,ovr:clamp(m.ovr+1,0,99)};
-    winner.squad.push(m);
+  let winnerPlayer=null;
+  let winnerPaid=0;
 
-    io.to(room.code).emit("round_result",{
-      winnerId:winner.id,
-      winnerName:winner.name,
-      price:0,
-      reason:"budget_fallback",
-      player:m,
-      mystery:true
-    });
+  // الفائز يحصل على اللاعب المعروض إذا كانت ميزانيته تسمح.
+  if(room.currentBid<=winner.budget){
+    winnerPaid=room.currentBid;
+    winner.budget-=winnerPaid;
+    winnerPlayer={...auctionPlayer,price:winnerPaid,mystery:false};
   }else{
-    winner.budget-=finalPrice;
-    const signed={...room.current,price:finalPrice,mystery:false};
-    winner.squad.push(signed);
+    // حالة احتياطية نادرة: لو السعر الأساسي أعلى من الميزانية المتبقية.
+    const excludeWinner=new Set(
+      winner.squad.map(x=>x.id).filter(x=>typeof x.id==="number")
+    );
 
-    io.to(room.code).emit("round_result",{
-      winnerId:winner.id,
-      winnerName:winner.name,
-      price:finalPrice,
-      reason,
-      player:signed,
-      mystery:false
-    });
+    winnerPlayer=mysteryPlayer(
+      auctionPlayer.pos,
+      excludeWinner,
+      forbiddenForWinner
+    );
+
+    if(winner.manager==="scout"){
+      winnerPlayer={...winnerPlayer,ovr:clamp(winnerPlayer.ovr+1,0,99)};
+    }
   }
+
+  winner.squad.push(winnerPlayer);
+  room.used.add(winnerPlayer.id);
+
+  // الخاسر يحصل دائمًا على لاعب عشوائي مختلف من نفس المركز مجانًا.
+  let loserPlayer=null;
+
+  if(loser){
+    const excludeLoser=new Set(
+      loser.squad.map(x=>x.id).filter(x=>typeof x.id==="number")
+    );
+
+    const forbiddenLoser=new Set([
+      auctionPlayer.id,
+      winnerPlayer.id,
+      ...[...room.used]
+    ]);
+
+    loserPlayer=mysteryPlayer(
+      auctionPlayer.pos,
+      excludeLoser,
+      forbiddenLoser
+    );
+
+    if(loser.manager==="scout"){
+      loserPlayer={...loserPlayer,ovr:clamp(loserPlayer.ovr+1,0,99)};
+    }
+
+    loser.squad.push(loserPlayer);
+    room.used.add(loserPlayer.id);
+  }
+
+  io.to(room.code).emit("round_result",{
+    winnerId:winner.id,
+    winnerName:winner.name,
+    loserId:loser?.id || null,
+    loserName:loser?.name || null,
+    price:winnerPaid,
+    reason,
+    auctionPlayer,
+    winnerPlayer,
+    loserReward:loserPlayer ? {
+      userId:loser.id,
+      userName:loser.name,
+      player:loserPlayer
+    } : null
+  });
 
   room.round++;
   room.current=null;
@@ -737,6 +795,13 @@ button:active:not(:disabled){transform:translateY(1px)}
   height:178px;border-radius:24px;display:grid;place-items:center;position:relative;
   border:1px solid #385747;background:linear-gradient(160deg,#2b4f3b,#0b1711)
 }
+.playerVisual{width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:23px}
+.playerPhotoSlot{width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;background:linear-gradient(160deg,#294f3a,#0a1510)}
+.realPlayerPhoto{width:100%;height:100%;object-fit:cover;object-position:center top;display:block}
+.photoFallback{width:100%;height:100%;display:grid;place-items:center;font-size:52px;font-weight:1000;color:#dfffea;background:linear-gradient(160deg,#294f3a,#0a1510)}
+.pitchPhoto{width:36px;height:36px;border-radius:50%;margin:0 auto 3px;border:1px solid rgba(255,255,255,.16)}
+.pitchPhoto .photoFallback{font-size:14px}
+.revealPhoto{width:118px;height:118px;border-radius:20px;margin:0 auto 10px;border:1px solid var(--line)}
 .playerCard .sil{font-size:76px}.ovr{
   position:absolute;top:9px;right:9px;padding:7px 8px;border-radius:12px;background:#07100d;
   border:1px solid var(--line);font-weight:1000;color:var(--gold)
@@ -924,7 +989,7 @@ button:active:not(:disabled){transform:translateY(1px)}
     <div class="playerHero">
       <div class="playerCard">
         <div id="ovr" class="ovr">90</div>
-        <div class="sil">👤</div>
+        <div id="playerVisual" class="playerVisual"></div>
       </div>
 
       <div class="playerInfo">
@@ -958,7 +1023,7 @@ button:active:not(:disabled){transform:translateY(1px)}
       <button id="passBtn" class="danger">اترك اللاعب</button>
       <button id="statusBtn" disabled>الدور بيتغير تلقائيًا</button>
     </div>
-    <div class="help"><b>اترك اللاعب:</b> لو ضغطت عليه أو عداد الـ10 ثواني خلص، اللاعب يروح لخصمك بالسعر الحالي. لو كنت صاحب أعلى مزايدة وخصمك ترك، اللاعب يروح لك.</div>
+    <div class="help"><b>اترك اللاعب:</b> لو ضغطت عليه أو عداد الـ10 ثواني خلص، اللاعب المعروض يروح لخصمك بالسعر الحالي، وأنت تحصل على لاعب عشوائي مختلف من نفس المركز مجانًا. كذلك لو أنت كسبت المزاد، خصمك يحصل على لاعب عشوائي مختلف.</div>
 
     <p id="bidError" class="error"></p>
   </div>
@@ -995,6 +1060,8 @@ button:active:not(:disabled){transform:translateY(1px)}
 
 </section>
 
+<div style="text-align:center;margin-top:18px;color:var(--muted);font-size:9px;line-height:1.5">صور اللاعبين تُحمّل تلقائيًا من Wikipedia/Wikimedia عند توفر صورة، ويظهر بديل تلقائي لو تعذر التحميل.</div>
+
 </main>
 
 <div id="roundOverlay" class="overlay">
@@ -1024,6 +1091,112 @@ const FLAGS={
   NED:"🇳🇱",GER:"🇩🇪",MAR:"🇲🇦",ENG:"🏴",ESP:"🇪🇸",URU:"🇺🇾",
   GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬"
 };
+
+const WIKI_TITLES={
+  "Alisson":"Alisson Becker",
+  "Ederson":"Ederson (footballer, born 1993)",
+  "Donnarumma":"Gianluigi Donnarumma",
+  "Theo Hernandez":"Theo Hernández",
+  "Nuno Mendes":"Nuno Mendes (footballer)",
+  "Antonio Rudiger":"Antonio Rüdiger",
+  "Ruben Dias":"Rúben Dias",
+  "Bastoni":"Alessandro Bastoni",
+  "Marquinhos":"Marquinhos",
+  "Jules Kounde":"Jules Koundé",
+  "Rodri":"Rodri (footballer, born 1996)",
+  "Vitinha":"Vitinha (footballer, born February 2000)",
+  "Florian Wirtz":"Florian Wirtz",
+  "Vinicius Junior":"Vinícius Júnior",
+  "Khvicha Kvaratskhelia":"Khvicha Kvaratskhelia",
+  "Rafael Leao":"Rafael Leão",
+  "Luis Diaz":"Luis Díaz (footballer, born 1997)",
+  "Kylian Mbappe":"Kylian Mbappé",
+  "Lautaro Martinez":"Lautaro Martínez"
+};
+
+const imageCache=new Map();
+
+function wikiTitleFor(name){
+  return WIKI_TITLES[name] || name;
+}
+
+function playerPhotoHtml(player,extraClass=""){
+  if(!player) return "";
+
+  const initial=esc((player.name||"?").charAt(0).toUpperCase());
+
+  return (
+    '<div class="playerPhotoSlot '+extraClass+'" data-player-photo="'+esc(player.name)+'">'+
+      '<div class="photoFallback">'+initial+'</div>'+
+    '</div>'
+  );
+}
+
+async function getPlayerImage(name){
+  if(imageCache.has(name)){
+    return imageCache.get(name);
+  }
+
+  const title=wikiTitleFor(name);
+
+  const promise=fetch(
+    "https://en.wikipedia.org/w/api.php"+
+    "?action=query"+
+    "&format=json"+
+    "&origin=*"+
+    "&prop=pageimages"+
+    "&piprop=thumbnail"+
+    "&pithumbsize=500"+
+    "&titles="+encodeURIComponent(title)
+  )
+    .then(r=>r.ok?r.json():null)
+    .then(data=>{
+      const pages=data?.query?.pages;
+      if(!pages) return null;
+      const page=Object.values(pages)[0];
+      return page?.thumbnail?.source || null;
+    })
+    .catch(()=>null);
+
+  imageCache.set(name,promise);
+  return promise;
+}
+
+function hydratePlayerImages(root=document){
+  const slots=[...root.querySelectorAll("[data-player-photo]")];
+
+  for(const slot of slots){
+    if(slot.dataset.loading==="1" || slot.dataset.loaded==="1") continue;
+
+    slot.dataset.loading="1";
+    const name=slot.dataset.playerPhoto;
+
+    getPlayerImage(name).then(url=>{
+      if(!slot.isConnected) return;
+
+      if(!url){
+        slot.dataset.loading="0";
+        return;
+      }
+
+      const img=document.createElement("img");
+      img.className="realPlayerPhoto";
+      img.alt=name;
+      img.src=url;
+
+      img.onload=()=>{
+        if(!slot.isConnected) return;
+        slot.innerHTML="";
+        slot.appendChild(img);
+        slot.dataset.loaded="1";
+      };
+
+      img.onerror=()=>{
+        slot.dataset.loading="0";
+      };
+    });
+  }
+}
 
 let myId=null;
 let code=null;
@@ -1247,6 +1420,8 @@ function renderAuction(s){
     $("ovr").textContent=s.current.ovr;
     $("playerName").textContent=s.current.name;
     $("playerMeta").textContent=(FLAGS[s.current.nation]||"🌍")+" "+s.current.nation+" • "+s.current.pos;
+    $("playerVisual").innerHTML=playerPhotoHtml(s.current);
+    hydratePlayerImages($("playerVisual"));
   }
 
   $("bid").textContent=fmt(s.currentBid);
@@ -1290,43 +1465,54 @@ function renderAuction(s){
 }
 
 function showRoundResult(r){
-  const mine=r.winnerId===myId;
+  const iWon=r.winnerId===myId;
+  const iLost=r.loserId===myId;
 
-  $("revealIcon").textContent=mine?"✅":"⚔️";
+  let myPlayer=null;
+
   $("revealEyebrow").textContent="نتيجة الجولة";
 
-  if(mine){
-    $("revealTitle").textContent="اللاعب دخل تشكيلتك";
+  if(iWon){
+    myPlayer=r.winnerPlayer;
+    $("revealIcon").textContent="✅";
+    $("revealTitle").textContent="اللاعب المعروض دخل تشكيلتك";
     $("revealText").textContent=
       r.price>0
-        ? "كسبت اللاعب مقابل €"+fmt(r.price)+"M"
+        ? "كسبت "+r.auctionPlayer.name+" مقابل €"+fmt(r.price)+"M. خصمك حصل على لاعب عشوائي مختلف."
         : "حصلت على لاعب بديل مجاني بسبب الميزانية.";
-  }else{
-    $("revealTitle").textContent=r.winnerName+" كسب اللاعب";
+  }else if(iLost && r.loserReward){
+    myPlayer=r.loserReward.player;
+    $("revealIcon").textContent="🎲";
+    $("revealTitle").textContent="وصلك لاعب عشوائي مختلف";
     $("revealText").textContent=
-      r.reason==="timeout"
-        ? "الـ10 ثواني انتهت قبل ما تتصرف."
-        : "تم ترك اللاعب في دورك.";
+      r.winnerName+" كسب "+r.auctionPlayer.name+
+      "، وأنت حصلت مجانًا على لاعب مختلف من نفس المركز.";
+  }else{
+    return;
   }
 
   $("revealPlayer").innerHTML=
-    '<div class="big">'+esc(r.player.name)+'</div>'+
-    '<div class="meta">'+r.player.ovr+' OVR • '+r.player.pos+(r.mystery?" • لاعب غامض":"")+'</div>';
+    playerPhotoHtml(myPlayer,"revealPhoto")+
+    '<div class="big">'+esc(myPlayer.name)+'</div>'+
+    '<div class="meta">'+myPlayer.ovr+' OVR • '+myPlayer.pos+(myPlayer.mystery?" • لاعب عشوائي":"")+'</div>';
+
+  hydratePlayerImages($("revealPlayer"));
 
   $("roundOverlay").classList.add("show");
-  setTimeout(()=>$("roundOverlay").classList.remove("show"),2100);
+  setTimeout(()=>$("roundOverlay").classList.remove("show"),2500);
 }
 
 function playerCardHtml(p){
   if(!p){
-    return '<div class="pitchPlayer"><div class="povr">—</div><b>EMPTY</b><small>—</small></div>';
+    return '<div class="pitchPlayer"><div class="pitchPhoto playerPhotoSlot"><div class="photoFallback">?</div></div><div class="povr">—</div><b>EMPTY</b><small>—</small></div>';
   }
 
   return (
     '<div class="pitchPlayer">'+
+      playerPhotoHtml(p,"pitchPhoto")+
       '<div class="povr">'+p.ovr+'</div>'+
       '<b>'+esc(p.name)+'</b>'+
-      '<small>'+p.pos+'</small>'+
+      '<small>'+p.pos+(p.mystery?" • 🎲":"")+'</small>'+
     '</div>'
   );
 }
@@ -1364,6 +1550,8 @@ function renderLivePitches(players){
   $("pitches").innerHTML=
     (me?pitchHtml(me,"🏟️ ملعبي"):"")+
     (opp?pitchHtml(opp,"🏟️ ملعب الخصم"):"");
+
+  hydratePlayerImages($("pitches"));
 }
 
 function statRow(label,a,b){
@@ -1414,6 +1602,8 @@ function renderResult(r){
   $("resultPitches").innerHTML=
     (me?pitchHtml({...me,budget:0},"🏟️ تشكيلتي النهائية"):"")+
     (opp?pitchHtml({...opp,budget:0},"🏟️ تشكيلة الخصم"):"");
+
+  hydratePlayerImages($("resultPitches"));
 }
 
 })();
