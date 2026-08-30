@@ -1,11 +1,14 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const { OAuth2Client } = require("google-auth-library");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // ============================================================
 // BID XI V4 — Arabic / Turn Based Auction
@@ -96,6 +99,7 @@ function publicUser(u){
   return {
     id:u.id,
     name:u.name,
+    picture:u.picture || "",
     manager:u.manager,
     budget:u.budget,
     squad:u.squad
@@ -498,7 +502,49 @@ function finishMatch(room){
 
 io.on("connection",socket=>{
 
-  socket.on("create",({name},cb)=>{
+  socket.on("google_auth",async ({credential},cb)=>{
+    try{
+      if(!GOOGLE_CLIENT_ID){
+        return cb?.({ok:false,error:"GOOGLE_CLIENT_ID غير مضبوط على السيرفر"});
+      }
+
+      if(!credential){
+        return cb?.({ok:false,error:"بيانات تسجيل الدخول غير موجودة"});
+      }
+
+      const ticket=await googleClient.verifyIdToken({
+        idToken:credential,
+        audience:GOOGLE_CLIENT_ID
+      });
+
+      const payload=ticket.getPayload();
+
+      if(!payload?.sub || !payload?.name){
+        return cb?.({ok:false,error:"تعذر قراءة حساب Google"});
+      }
+
+      socket.data.googleUser={
+        sub:payload.sub,
+        name:String(payload.name).slice(0,30),
+        email:String(payload.email||""),
+        picture:String(payload.picture||"")
+      };
+
+      cb?.({
+        ok:true,
+        user:{
+          name:socket.data.googleUser.name,
+          email:socket.data.googleUser.email,
+          picture:socket.data.googleUser.picture
+        }
+      });
+    }catch(err){
+      console.error("Google auth error:",err?.message||err);
+      cb?.({ok:false,error:"فشل تسجيل الدخول بحساب Google"});
+    }
+  });
+
+  socket.on("create",(_,cb)=>{
     let code;
     do{code=makeCode();}while(rooms.has(code));
 
@@ -518,9 +564,17 @@ io.on("connection",socket=>{
       result:null
     };
 
+    const googleUser=socket.data.googleUser;
+
+    if(!googleUser){
+      return cb?.({ok:false,error:"سجّل دخول بحساب Google الأول"});
+    }
+
     room.users.set(socket.id,{
       id:socket.id,
-      name:String(name||"Player").slice(0,18),
+      googleSub:googleUser.sub,
+      name:googleUser.name,
+      picture:googleUser.picture,
       manager:null,
       budget:180,
       squad:[]
@@ -533,18 +587,29 @@ io.on("connection",socket=>{
     emitRoom(room);
   });
 
-  socket.on("join",({name,code},cb)=>{
+  socket.on("join",({code},cb)=>{
     code=String(code||"").trim().toUpperCase();
 
     const room=rooms.get(code);
+    const googleUser=socket.data.googleUser;
+
+    if(!googleUser){
+      return cb?.({ok:false,error:"سجّل دخول بحساب Google الأول"});
+    }
 
     if(!room) return cb?.({ok:false,error:"الغرفة غير موجودة"});
     if(room.phase!=="manager") return cb?.({ok:false,error:"اللعبة بدأت بالفعل"});
     if(room.users.size>=2) return cb?.({ok:false,error:"الغرفة ممتلئة — لاعبان فقط"});
 
+    if([...room.users.values()].some(u=>u.googleSub===googleUser.sub)){
+      return cb?.({ok:false,error:"نفس حساب Google موجود بالفعل داخل الغرفة"});
+    }
+
     room.users.set(socket.id,{
       id:socket.id,
-      name:String(name||"Player").slice(0,18),
+      googleSub:googleUser.sub,
+      name:googleUser.name,
+      picture:googleUser.picture,
       manager:null,
       budget:180,
       squad:[]
@@ -731,6 +796,15 @@ button{cursor:pointer}
 .brand h1 span{color:var(--lime)}
 .brand p{margin:0;color:var(--muted)}
 .homeCard{padding:18px}
+.googleWrap{display:flex;justify-content:center;min-height:44px;margin:8px 0 12px}
+.authState{display:none;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:#07100d;margin-bottom:13px;text-align:right}
+.authState.show{display:flex}
+.authAvatar{width:46px;height:46px;border-radius:50%;object-fit:cover;border:2px solid rgba(67,244,125,.45);background:#15281f}
+.authInfo{min-width:0;flex:1}
+.authInfo b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.authInfo span{display:block;color:var(--muted);font-size:10px;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gameEntry{display:none}.gameEntry.show{display:block}
+.googleHint{text-align:center;color:var(--muted);font-size:11px;line-height:1.5;margin-bottom:8px}
 label,small{display:block;color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.03em}
 .help{font-size:11px;line-height:1.55;color:var(--muted);margin:5px 2px 12px}
 input{
@@ -758,8 +832,9 @@ button:active:not(:disabled){transform:translateY(1px)}
 .managerMini{text-align:center;padding:14px;min-width:0}
 .avatar{
   width:48px;height:48px;margin:auto;border-radius:50%;display:grid;place-items:center;
-  background:#183326;color:var(--lime);font-weight:1000;font-size:20px
+  background:#183326;color:var(--lime);font-weight:1000;font-size:20px;overflow:hidden
 }
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
 .managerMini b{display:block;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vs{text-align:center;color:var(--gold);font-weight:1000}
 .managerPick{padding:18px}
@@ -890,20 +965,32 @@ button:active:not(:disabled){transform:translateY(1px)}
   </div>
 
   <div class="card homeCard">
-    <label>اسمك</label>
-    <input id="name" maxlength="18" placeholder="اكتب اسمك">
-    <div class="help">الاسم ده هيظهر لصاحبك داخل الغرفة وفوق ملعب تشكيلتك.</div>
+    <small>تسجيل الدخول</small>
+    <div class="googleHint">سجّل بحساب Google مرة واحدة. اسمك وصورتك هيتاخدوا تلقائيًا من الحساب.</div>
 
-    <button id="createBtn" class="primary">إنشاء غرفة خاصة</button>
-    <div class="help">ينشئ لك كود من 6 خانات تبعته لصاحبك علشان يدخل معاك.</div>
+    <div id="googleButton" class="googleWrap"></div>
 
-    <div class="or">أو</div>
+    <div id="authState" class="authState">
+      <img id="authAvatar" class="authAvatar" alt="">
+      <div class="authInfo">
+        <b id="authName">—</b>
+        <span id="authEmail">—</span>
+      </div>
+    </div>
 
-    <label>كود الغرفة</label>
-    <input id="joinCode" maxlength="6" placeholder="ABC123">
-    <div class="help">اكتب الكود اللي صاحبك بعتهولك، وبعدها اضغط دخول.</div>
+    <div id="gameEntry" class="gameEntry">
+      <button id="createBtn" class="primary">إنشاء غرفة خاصة</button>
+      <div class="help">اسمك هيكون اسم حساب Google تلقائيًا، ومش هتكتب أي اسم يدوي.</div>
 
-    <button id="joinBtn" class="secondary">دخول الغرفة</button>
+      <div class="or">أو</div>
+
+      <label>كود الغرفة</label>
+      <input id="joinCode" maxlength="6" placeholder="ABC123">
+      <div class="help">لو صاحبك أنشأ الغرفة، كل اللي عليك تكتبه هو كود الغرفة فقط.</div>
+
+      <button id="joinBtn" class="secondary">دخول الغرفة</button>
+    </div>
+
     <p id="homeError" class="error"></p>
   </div>
 </section>
@@ -1074,6 +1161,7 @@ button:active:not(:disabled){transform:translateY(1px)}
   </div>
 </div>
 
+<script src="https://accounts.google.com/gsi/client?hl=ar" async defer></script>
 <script src="/socket.io/socket.io.js"></script>
 
 <script>
@@ -1198,10 +1286,14 @@ function hydratePlayerImages(root=document){
   }
 }
 
+const GOOGLE_CLIENT_ID="__GOOGLE_CLIENT_ID__";
+
 let myId=null;
 let code=null;
 let state=null;
 let match=null;
+let googleUser=null;
+let googleCredential=sessionStorage.getItem("bidXiGoogleCredential") || "";
 
 const $=id=>document.getElementById(id);
 
@@ -1236,16 +1328,104 @@ function toast(text){
   t._timer=setTimeout(()=>t.classList.remove("show"),1800);
 }
 
-socket.on("connect",()=>{myId=socket.id});
+function renderSignedInUser(user){
+  googleUser=user;
+  $("authName").textContent=user.name||"Google User";
+  $("authEmail").textContent=user.email||"";
+  $("authAvatar").src=user.picture||"";
+  $("authAvatar").style.display=user.picture?"block":"none";
+  $("authState").classList.add("show");
+  $("gameEntry").classList.add("show");
+  $("googleButton").style.display="none";
+  $("homeError").textContent="";
+}
 
-$("createBtn").onclick=()=>{
-  const name=$("name").value.trim();
+function authWithServer(credential){
+  if(!credential) return;
 
-  if(!name){
-    return $("homeError").textContent="اكتب اسمك الأول";
+  socket.emit("google_auth",{credential},r=>{
+    if(!r?.ok){
+      sessionStorage.removeItem("bidXiGoogleCredential");
+      googleCredential="";
+      googleUser=null;
+      $("authState").classList.remove("show");
+      $("gameEntry").classList.remove("show");
+      $("googleButton").style.display="flex";
+      $("homeError").textContent=r?.error||"تعذر تسجيل الدخول";
+      renderGoogleButton();
+      return;
+    }
+
+    googleCredential=credential;
+    sessionStorage.setItem("bidXiGoogleCredential",credential);
+    renderSignedInUser(r.user);
+  });
+}
+
+window.handleGoogleCredential=function(response){
+  if(!response?.credential){
+    $("homeError").textContent="لم يتم استلام بيانات حساب Google";
+    return;
   }
 
-  socket.emit("create",{name},r=>{
+  authWithServer(response.credential);
+};
+
+function renderGoogleButton(){
+  if(!GOOGLE_CLIENT_ID){
+    $("homeError").textContent="لازم تضيف GOOGLE_CLIENT_ID في Railway Variables";
+    return;
+  }
+
+  if(!window.google?.accounts?.id){
+    setTimeout(renderGoogleButton,250);
+    return;
+  }
+
+  const box=$("googleButton");
+  if(box.dataset.rendered==="1") return;
+
+  google.accounts.id.initialize({
+    client_id:GOOGLE_CLIENT_ID,
+    callback:window.handleGoogleCredential,
+    auto_select:false,
+    cancel_on_tap_outside:true
+  });
+
+  google.accounts.id.renderButton(box,{
+    type:"standard",
+    theme:"filled_black",
+    size:"large",
+    text:"signin_with",
+    shape:"pill",
+    logo_alignment:"left",
+    width:320,
+    locale:"ar"
+  });
+
+  box.dataset.rendered="1";
+}
+
+window.onGoogleLibraryLoad=()=>{
+  renderGoogleButton();
+};
+
+socket.on("connect",()=>{
+  myId=socket.id;
+
+  if(googleCredential){
+    authWithServer(googleCredential);
+  }else{
+    renderGoogleButton();
+  }
+});
+
+$("createBtn").onclick=()=>{
+  if(!googleUser){
+    return $("homeError").textContent="سجّل دخول بحساب Google الأول";
+  }
+
+  socket.emit("create",{},r=>{
     if(!r?.ok){
       return $("homeError").textContent=r?.error||"تعذر إنشاء الغرفة";
     }
@@ -1257,14 +1437,17 @@ $("createBtn").onclick=()=>{
 };
 
 $("joinBtn").onclick=()=>{
-  const name=$("name").value.trim();
-  const room=$("joinCode").value.trim().toUpperCase();
-
-  if(!name||room.length!==6){
-    return $("homeError").textContent="اكتب اسمك وكود الغرفة المكون من 6 خانات";
+  if(!googleUser){
+    return $("homeError").textContent="سجّل دخول بحساب Google الأول";
   }
 
-  socket.emit("join",{name,code:room},r=>{
+  const room=$("joinCode").value.trim().toUpperCase();
+
+  if(room.length!==6){
+    return $("homeError").textContent="اكتب كود الغرفة المكون من 6 خانات";
+  }
+
+  socket.emit("join",{code:room},r=>{
     if(!r?.ok){
       return $("homeError").textContent=r?.error||"تعذر دخول الغرفة";
     }
@@ -1378,8 +1561,12 @@ function managerBox(player,hostId){
 
   const m=player.manager?MANAGERS[player.manager]:null;
 
+  const avatar=player.picture
+    ? '<div class="avatar"><img src="'+esc(player.picture)+'" alt=""></div>'
+    : '<div class="avatar">'+esc(initials(player.name))+'</div>';
+
   return (
-    '<div class="avatar">'+esc(initials(player.name))+'</div>'+
+    avatar+
     '<b>'+esc(player.name)+'</b>'+
     '<small>'+(player.id===hostId?"صاحب الغرفة":"المنافس")+(m?" • "+m.icon+" "+m.name:"")+'</small>'
   );
@@ -1612,8 +1799,8 @@ function renderResult(r){
 </html>
 `;
 
-app.get("/",(req,res)=>res.type("html").send(PAGE));
+app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V4 AR running on port "+PORT);
+  console.log("BID XI V6 Google Login running on port "+PORT);
 });
