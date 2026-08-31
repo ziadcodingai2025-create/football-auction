@@ -1,7 +1,6 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
@@ -166,277 +165,340 @@ const BASE_PLAYER_POOL = [
 ];
 
 // ============================================================
-// REAL PLAYER DATABASE
-// - No fake/generated footballer names.
-// - Every in-game OVR is at least 80.
-// - At startup we try to load 1000 real male players from EA's
-//   public ratings endpoint. If that source is temporarily down,
-//   the curated real-player list above remains as a safe fallback.
+// REAL 1000-PLAYER DATABASE
+// Source: public 2026 World Cup squads dataset (1,248 real players).
+// We keep the hand-curated star list, then fill the database with
+// real player names from the public dataset. Every in-game OVR is
+// clamped to at least 80.
 // ============================================================
 
-function basePriceFromRating(ovr){
-  if(ovr >= 93) return 21;
-  if(ovr >= 90) return 17;
-  if(ovr >= 88) return 14;
-  if(ovr >= 86) return 12;
-  if(ovr >= 84) return 10;
-  if(ovr >= 82) return 8;
-  return 6;
-}
+const REAL_PLAYER_DATA_URLS = [
+  "https://raw.githubusercontent.com/mominullptr/FIFA-World-Cup-2026-Dataset/refs/heads/main/squads_and_players.csv",
+  "https://github.com/mominullptr/FIFA-World-Cup-2026-Dataset/raw/refs/heads/main/squads_and_players.csv"
+];
 
-function normalizeGamePosition(raw){
-  if(raw && typeof raw==="object"){
-    raw =
-      raw.shortLabel ||
-      raw.label ||
-      raw.name ||
-      raw.code ||
-      raw.abbreviation ||
-      "";
-  }
+const TARGET_POSITION_COUNTS = {
+  GK: 90,
+  LB: 85,
+  CB: 180,
+  RB: 85,
+  CM: 190,
+  CAM: 90,
+  LW: 90,
+  ST: 100,
+  RW: 90
+};
 
-  const p=String(raw||"")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g,"");
-
-  if(!p) return null;
-
-  if(p==="GK" || p.includes("GOALKEEPER")) return "GK";
-
-  if(["LB","LWB","LEFTBACK","LEFTWINGBACK"].includes(p)) return "LB";
-  if(["RB","RWB","RIGHTBACK","RIGHTWINGBACK"].includes(p)) return "RB";
-  if(["CB","LCB","RCB","CENTREBACK","CENTERBACK"].includes(p)) return "CB";
-
-  if(["CDM","CM","LCM","RCM","DM","CENTREMID","CENTERMID","MIDFIELDER"].includes(p)) return "CM";
-  if(["CAM","AM","LAM","RAM","ATTACKINGMID"].includes(p)) return "CAM";
-
-  if(["LW","LM","LF","LEFTWING","LEFTMID"].includes(p)) return "LW";
-  if(["RW","RM","RF","RIGHTWING","RIGHTMID"].includes(p)) return "RW";
-
-  if(["ST","CF","LS","RS","STRIKER","FORWARD","CENTREFORWARD","CENTERFORWARD"].includes(p)) return "ST";
-
-  return null;
-}
-
-function countryCodeFromName(value){
-  const raw = value && typeof value==="object"
-    ? (value.name || value.label || value.countryName || "")
-    : String(value||"");
-
-  const key=raw.trim().toLowerCase();
-
-  const map={
-    "england":"ENG","spain":"ESP","france":"FRA","germany":"GER","italy":"ITA",
-    "portugal":"POR","brazil":"BRA","argentina":"ARG","netherlands":"NED",
-    "belgium":"BEL","morocco":"MAR","uruguay":"URU","colombia":"COL",
-    "norway":"NOR","sweden":"SWE","egypt":"EGY","canada":"CAN","georgia":"GEO",
-    "switzerland":"SUI","slovenia":"SLO","hungary":"HUN","ecuador":"ECU",
-    "scotland":"SCO","korea republic":"KOR","south korea":"KOR","japan":"JPN",
-    "nigeria":"NGA","poland":"POL","serbia":"SRB","guinea":"GUI","mexico":"MEX",
-    "denmark":"DEN","cameroon":"CMR"
-  };
-
-  return map[key] || raw.slice(0,3).toUpperCase() || "INT";
-}
-
-function realPlayerName(item){
-  const common =
-    item?.commonName ||
-    item?.common_name ||
-    item?.displayName ||
-    item?.playerName ||
-    item?.name;
-
-  if(common && String(common).trim()){
-    return String(common).trim();
-  }
-
-  return [
-    item?.firstName || item?.first_name,
-    item?.lastName || item?.last_name
-  ].filter(Boolean).join(" ").trim();
-}
-
-function realPlayerRating(item){
-  const raw =
-    item?.overallRating ??
-    item?.overall_rating ??
-    item?.rating ??
-    item?.overall ??
-    80;
-
-  const n=Number(raw);
-  if(!Number.isFinite(n)) return 80;
-
-  // User requirement: nobody below 80 in the game.
-  return Math.max(80,Math.min(99,Math.round(n)));
-}
-
-function realPlayerPosition(item){
-  const candidates=[
-    item?.position,
-    item?.preferredPosition,
-    item?.preferred_position,
-    item?.positionLabel,
-    item?.positionShortLabel,
-    item?.primaryPosition,
-    item?.preferredPosition1
-  ];
-
-  for(const candidate of candidates){
-    const mapped=normalizeGamePosition(candidate);
-    if(mapped) return mapped;
-  }
-
-  return null;
-}
-
-function realPlayerImage(item){
-  const candidates=[
-    item?.image,
-    item?.imageUrl,
-    item?.image_url,
-    item?.avatar,
-    item?.avatarUrl,
-    item?.picture,
-    item?.photo,
-    item?.headshot
-  ];
-
-  for(const value of candidates){
-    if(typeof value==="string" && /^https?:\/\//i.test(value)){
-      return value;
-    }
-  }
-
-  return "";
-}
-
-function normalizeEaPlayer(item,index){
-  const name=realPlayerName(item);
-  const pos=realPlayerPosition(item);
-
-  if(!name || !pos) return null;
-
-  const ovr=realPlayerRating(item);
-
-  return {
-    id:"ea-"+String(item?.id ?? item?.playerId ?? item?.player_id ?? index),
-    name,
-    pos,
-    ovr,
-    nation:countryCodeFromName(
-      item?.nationality ??
-      item?.nationalityName ??
-      item?.country ??
-      item?.nation ??
-      ""
-    ),
-    base:basePriceFromRating(ovr),
-    img:realPlayerImage(item),
-    real:true
-  };
-}
-
-// Start with the curated REAL players only.
-let PLAYER_POOL=BASE_PLAYER_POOL.map((p,index)=>({
+let PLAYER_POOL = BASE_PLAYER_POOL.map(p=>({
   ...p,
-  id:"base-"+String(p.id ?? index),
   ovr:Math.max(80,Number(p.ovr)||80),
-  base:basePriceFromRating(Math.max(80,Number(p.ovr)||80)),
-  real:true
+  realPlayer:true
 }));
 
-async function loadRealPlayerPool(){
-  const urls=[];
+let playerDatabaseStatus = {
+  loaded:false,
+  count:PLAYER_POOL.length,
+  source:"curated-fallback"
+};
 
-  // 15 pages gives us room to filter duplicates / positions
-  // while still ending at 1000 unique real players.
-  for(let offset=0;offset<1500;offset+=100){
-    urls.push(
-      "https://drop-api.ea.com/rating/ea-sports-fc"+
-      "?locale=en&limit=100&gender=0&offset="+offset
-    );
+function csvRows(text){
+  const rows=[];
+  let row=[];
+  let cell="";
+  let quoted=false;
+
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+
+    if(ch === '"'){
+      if(quoted && text[i+1] === '"'){
+        cell+='"';
+        i++;
+      }else{
+        quoted=!quoted;
+      }
+      continue;
+    }
+
+    if(ch === "," && !quoted){
+      row.push(cell);
+      cell="";
+      continue;
+    }
+
+    if((ch === "\n" || ch === "\r") && !quoted){
+      if(ch === "\r" && text[i+1] === "\n") i++;
+
+      row.push(cell);
+      cell="";
+
+      if(row.some(v=>String(v).trim()!=="")){
+        rows.push(row);
+      }
+
+      row=[];
+      continue;
+    }
+
+    cell+=ch;
   }
 
+  if(cell.length || row.length){
+    row.push(cell);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeNameKey(name){
+  return String(name||"")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+function hashNumber(value){
+  const s=String(value||"");
+  let h=2166136261;
+
+  for(let i=0;i<s.length;i++){
+    h^=s.charCodeAt(i);
+    h=Math.imul(h,16777619);
+  }
+
+  return h>>>0;
+}
+
+function gamePositionForRealPlayer(row){
+  const broad=String(row.position||"").toUpperCase().trim();
+  const id=Number(row.player_id)||hashNumber(row.player_name);
+  const height=Number(row.height_cm)||180;
+
+  if(broad==="GK" || broad.includes("GOAL")){
+    return "GK";
+  }
+
+  if(broad==="DEF" || broad.includes("DEF")){
+    if(height>=184 || id%5<3) return "CB";
+    return id%2===0 ? "LB" : "RB";
+  }
+
+  if(broad==="MID" || broad.includes("MID")){
+    return id%4===0 ? "CAM" : "CM";
+  }
+
+  const n=id%10;
+  if(n<3) return "LW";
+  if(n<7) return "ST";
+  return "RW";
+}
+
+function realPlayerOvr(row){
+  const value=Math.max(0,Number(row.market_value_eur)||0);
+  const caps=Math.max(0,Number(row.caps)||0);
+  const goals=Math.max(0,Number(row.goals)||0);
+
+  let ovr=80;
+
+  if(value>=80000000) ovr=89;
+  else if(value>=50000000) ovr=88;
+  else if(value>=30000000) ovr=87;
+  else if(value>=20000000) ovr=86;
+  else if(value>=12000000) ovr=85;
+  else if(value>=7000000) ovr=84;
+  else if(value>=4000000) ovr=83;
+  else if(value>=2000000) ovr=82;
+  else if(value>=800000) ovr=81;
+
+  if(caps>=90) ovr++;
+  if(goals>=25) ovr++;
+
+  return Math.max(80,Math.min(90,ovr));
+}
+
+function realPlayerBasePrice(ovr){
+  if(ovr>=90) return 16;
+  if(ovr>=88) return 13;
+  if(ovr>=86) return 11;
+  if(ovr>=84) return 8;
+  if(ovr>=82) return 5;
+  return 3;
+}
+
+async function fetchTextWithTimeout(url,ms=12000){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),ms);
+
   try{
-    const results=await Promise.all(
-      urls.map(async url=>{
-        try{
-          const response=await fetch(url,{
-            headers:{
-              "accept":"application/json",
-              "user-agent":"BID-XI/11"
-            }
-          });
-
-          if(!response.ok) return [];
-          const data=await response.json();
-          return Array.isArray(data?.items) ? data.items : [];
-        }catch{
-          return [];
-        }
-      })
-    );
-
-    const raw=results.flat();
-
-    if(!raw.length){
-      console.log("EA player feed unavailable. Using curated real-player fallback:",PLAYER_POOL.length);
-      return;
-    }
-
-    const unique=new Map();
-
-    for(let i=0;i<raw.length;i++){
-      const player=normalizeEaPlayer(raw[i],i);
-      if(!player) continue;
-
-      const key=(player.name+"|"+player.pos).toLowerCase();
-
-      if(!unique.has(key)){
-        unique.set(key,player);
+    const response=await fetch(url,{
+      signal:controller.signal,
+      headers:{
+        "User-Agent":"BID-XI/11.0"
       }
+    });
+
+    if(!response.ok){
+      throw new Error("HTTP "+response.status);
     }
 
-    // Keep curated stars first, then add EA real players without duplication.
-    const merged=new Map();
-
-    for(const p of PLAYER_POOL){
-      merged.set((p.name+"|"+p.pos).toLowerCase(),p);
-    }
-
-    for(const p of unique.values()){
-      const key=(p.name+"|"+p.pos).toLowerCase();
-      if(!merged.has(key)){
-        merged.set(key,p);
-      }
-    }
-
-    const loaded=[...merged.values()]
-      .filter(p=>p.name && p.pos && Number(p.ovr)>=80)
-      .slice(0,1000);
-
-    if(loaded.length){
-      PLAYER_POOL=loaded;
-    }
-
-    console.log(
-      "REAL player database loaded:",
-      PLAYER_POOL.length,
-      "players | minimum OVR:",
-      Math.min(...PLAYER_POOL.map(p=>p.ovr))
-    );
-
-  }catch(err){
-    console.error("Real player database load failed:",err?.message||err);
-    console.log("Using curated real-player fallback:",PLAYER_POOL.length);
+    return await response.text();
+  }finally{
+    clearTimeout(timeout);
   }
 }
 
-loadRealPlayerPool();
+async function loadRealPlayerDatabase(){
+  let text=null;
+  let source=null;
+  let lastError=null;
 
+  for(const url of REAL_PLAYER_DATA_URLS){
+    try{
+      text=await fetchTextWithTimeout(url);
+      source=url;
+      break;
+    }catch(err){
+      lastError=err;
+      console.warn("Real player dataset URL failed:",url,err?.message||err);
+    }
+  }
+
+  if(!text){
+    console.error(
+      "Could not load the real-player dataset. Using curated real-player fallback only.",
+      lastError?.message||lastError||""
+    );
+
+    PLAYER_POOL=BASE_PLAYER_POOL.map(p=>({
+      ...p,
+      ovr:Math.max(80,Number(p.ovr)||80),
+      realPlayer:true
+    }));
+
+    playerDatabaseStatus={
+      loaded:false,
+      count:PLAYER_POOL.length,
+      source:"curated-fallback"
+    };
+
+    return;
+  }
+
+  const matrix=csvRows(text);
+
+  if(matrix.length<2){
+    throw new Error("Real-player CSV is empty");
+  }
+
+  const headers=matrix[0].map(x=>String(x).trim());
+
+  const rows=matrix.slice(1).map(values=>{
+    const obj={};
+    headers.forEach((key,index)=>{
+      obj[key]=values[index] ?? "";
+    });
+    return obj;
+  }).filter(row=>row.player_name && row.position);
+
+  rows.sort((a,b)=>{
+    return hashNumber(a.player_id+"|"+a.player_name) -
+           hashNumber(b.player_id+"|"+b.player_name);
+  });
+
+  const pool=BASE_PLAYER_POOL.map(p=>({
+    ...p,
+    ovr:Math.max(80,Number(p.ovr)||80),
+    realPlayer:true
+  }));
+
+  const seen=new Set(pool.map(p=>normalizeNameKey(p.name)));
+
+  const counts={};
+  for(const pos of Object.keys(TARGET_POSITION_COUNTS)){
+    counts[pos]=pool.filter(p=>p.pos===pos).length;
+  }
+
+  let nextId=Math.max(...pool.map(p=>Number(p.id)||0),0)+1;
+
+  for(const row of rows){
+    if(pool.length>=1000) break;
+
+    const key=normalizeNameKey(row.player_name);
+    if(!key || seen.has(key)) continue;
+
+    const pos=gamePositionForRealPlayer(row);
+    const target=TARGET_POSITION_COUNTS[pos]||0;
+
+    if((counts[pos]||0)>=target) continue;
+
+    const ovr=realPlayerOvr(row);
+
+    pool.push({
+      id:nextId++,
+      sourcePlayerId:Number(row.player_id)||null,
+      name:String(row.player_name).trim(),
+      pos,
+      ovr:Math.max(80,ovr),
+      nation:"INT",
+      club:String(row.club_team||"").trim(),
+      base:realPlayerBasePrice(ovr),
+      realPlayer:true,
+      generated:false
+    });
+
+    seen.add(key);
+    counts[pos]=(counts[pos]||0)+1;
+  }
+
+  for(const row of rows){
+    if(pool.length>=1000) break;
+
+    const key=normalizeNameKey(row.player_name);
+    if(!key || seen.has(key)) continue;
+
+    const pos=gamePositionForRealPlayer(row);
+    const ovr=realPlayerOvr(row);
+
+    pool.push({
+      id:nextId++,
+      sourcePlayerId:Number(row.player_id)||null,
+      name:String(row.player_name).trim(),
+      pos,
+      ovr:Math.max(80,ovr),
+      nation:"INT",
+      club:String(row.club_team||"").trim(),
+      base:realPlayerBasePrice(ovr),
+      realPlayer:true,
+      generated:false
+    });
+
+    seen.add(key);
+  }
+
+  PLAYER_POOL=pool.slice(0,1000).map(p=>({
+    ...p,
+    ovr:Math.max(80,Number(p.ovr)||80)
+  }));
+
+  playerDatabaseStatus={
+    loaded:PLAYER_POOL.length===1000,
+    count:PLAYER_POOL.length,
+    source
+  };
+
+  console.log(
+    "REAL player database loaded:",
+    PLAYER_POOL.length,
+    "players | minimum OVR:",
+    Math.min(...PLAYER_POOL.map(p=>p.ovr)),
+    "| source:",
+    source
+  );
+}
 
 const MANAGERS = {
   scout:{id:"scout",name:"الكشاف",icon:"🔎",desc:"أي لاعب غامض تحصل عليه تزيد قوته +1."},
@@ -450,11 +512,10 @@ const FLAGS={
   GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬",
   SLO:"🇸🇮",SUI:"🇨🇭",HUN:"🇭🇺",ECU:"🇪🇨",SCO:"🏴",KOR:"🇰🇷",
   JPN:"🇯🇵",NGA:"🇳🇬",POL:"🇵🇱",SRB:"🇷🇸",GUI:"🇬🇳",MEX:"🇲🇽",
-  DEN:"🇩🇰",CMR:"🇨🇲"
+  DEN:"🇩🇰",CMR:"🇨🇲",INT:"🌍"
 };
 
 const rooms=new Map();
-const reconnectTimers=new Map();
 
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
@@ -463,24 +524,6 @@ function makeCode(){
   let s="";
   for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
   return s;
-}
-
-function makeReconnectToken(){
-  return crypto.randomBytes(24).toString("hex");
-}
-
-function reconnectTimerKey(roomCode,token){
-  return String(roomCode||"")+"::"+String(token||"");
-}
-
-function clearReconnectTimer(roomCode,token){
-  const key=reconnectTimerKey(roomCode,token);
-  const timer=reconnectTimers.get(key);
-
-  if(timer){
-    clearTimeout(timer);
-    reconnectTimers.delete(key);
-  }
 }
 
 function cleanDisplayName(value,fallback="Player"){
@@ -559,6 +602,117 @@ function otherUser(room,userId){
   return [...room.users.values()].find(u=>u.id!==userId) || null;
 }
 
+const DISCONNECT_GRACE_MS=90000;
+
+function cleanSessionId(value){
+  const s=String(value||"").trim();
+  if(!/^[A-Za-z0-9_-]{16,120}$/.test(s)) return null;
+  return s;
+}
+
+function findUserBySession(room,sessionId){
+  if(!room || !sessionId) return null;
+  return [...room.users.values()].find(u=>u.sessionId===sessionId) || null;
+}
+
+function clearUserDisconnectTimer(user){
+  if(user?.disconnectTimer){
+    clearTimeout(user.disconnectTimer);
+    user.disconnectTimer=null;
+  }
+}
+
+function rebindUserToSocket(room,user,socket){
+  const oldId=user.id;
+
+  clearUserDisconnectTimer(user);
+
+  if(oldId!==socket.id){
+    room.users.delete(oldId);
+
+    user.id=socket.id;
+    room.users.set(socket.id,user);
+
+    if(room.hostId===oldId){
+      room.hostId=socket.id;
+    }
+
+    if(room.turnPlayerId===oldId){
+      room.turnPlayerId=socket.id;
+    }
+
+    if(room.highestBidder===oldId){
+      room.highestBidder=socket.id;
+    }
+
+    if(room.rematchRequest?.requesterId===oldId){
+      room.rematchRequest.requesterId=socket.id;
+    }
+  }
+
+  user.connected=true;
+  user.disconnectedAt=null;
+
+  socket.join(room.code);
+
+  socket.data.googleUser={
+    sub:user.googleSub,
+    name:user.googleName || user.name,
+    email:user.email || "",
+    picture:user.picture || ""
+  };
+}
+
+function removeDetachedUser(room,user){
+  if(!room || !user) return;
+
+  const current=findUserBySession(room,user.sessionId);
+
+  if(!current || current.connected!==false){
+    return;
+  }
+
+  const oldId=current.id;
+  clearUserDisconnectTimer(current);
+  room.users.delete(oldId);
+
+  if(room.hostId===oldId){
+    room.hostId=room.users.keys().next().value || null;
+  }
+
+  room.rematchRequest=null;
+
+  if(room.users.size===0){
+    if(room.turnTimer) clearInterval(room.turnTimer);
+    rooms.delete(room.code);
+    return;
+  }
+
+  if(room.phase==="auction" || room.phase==="result"){
+    resetRoomToManager(room);
+  }
+
+  emitRoom(room);
+}
+
+function scheduleSocketDisconnect(socket){
+  for(const room of rooms.values()){
+    const user=room.users.get(socket.id);
+    if(!user) continue;
+
+    user.connected=false;
+    user.disconnectedAt=Date.now();
+
+    clearUserDisconnectTimer(user);
+
+    user.disconnectTimer=setTimeout(()=>{
+      removeDetachedUser(room,user);
+    },DISCONNECT_GRACE_MS);
+
+    emitRoom(room);
+  }
+}
+
 function resetRoomToManager(room){
   if(room.turnTimer) clearInterval(room.turnTimer);
 
@@ -579,22 +733,23 @@ function resetRoomToManager(room){
     u.squad=[];
     u.lastMystery=null;
   }
+
+  room.turnOrder=[];
+  room.nextStarterIndex=0;
 }
 
-function removePlayerById(room,userId){
-  if(!room || !room.users.has(userId)) return;
+function removePlayerFromRoom(socket,room){
+  if(!room || !room.users.has(socket.id)) return;
 
-  const user=room.users.get(userId);
-  clearReconnectTimer(room.code,user?.reconnectToken);
+  const leavingUser=room.users.get(socket.id);
+  clearUserDisconnectTimer(leavingUser);
 
-  room.users.delete(userId);
+  room.users.delete(socket.id);
+  socket.leave(room.code);
 
-  if(room.hostId===userId){
+  if(room.hostId===socket.id){
     room.hostId=room.users.keys().next().value || null;
   }
-
-  if(room.turnPlayerId===userId) room.turnPlayerId=null;
-  if(room.highestBidder===userId) room.highestBidder=null;
 
   room.rematchRequest=null;
 
@@ -604,6 +759,7 @@ function removePlayerById(room,userId){
     return;
   }
 
+  // لو حد خرج أثناء اللعب، نرجع الباقي للروم بدل ما اللعبة تفضل معلقة.
   if(room.phase==="auction" || room.phase==="result"){
     resetRoomToManager(room);
   }
@@ -611,54 +767,23 @@ function removePlayerById(room,userId){
   emitRoom(room);
 }
 
-function removePlayerFromRoom(socket,room){
-  if(!room || !room.users.has(socket.id)) return;
-
-  const user=room.users.get(socket.id);
-  clearReconnectTimer(room.code,user?.reconnectToken);
-
-  socket.leave(room.code);
-  removePlayerById(room,socket.id);
-}
-
 function removeSocketFromAllRooms(socket){
-  for(const room of [...rooms.values()]){
+  for(const room of rooms.values()){
     if(room.users.has(socket.id)){
       removePlayerFromRoom(socket,room);
     }
   }
 }
 
-function scheduleReconnectGrace(socket){
-  for(const room of rooms.values()){
-    if(!room.users.has(socket.id)) continue;
-
-    const user=room.users.get(socket.id);
-    user.connected=false;
-
-    const token=user.reconnectToken;
-    const key=reconnectTimerKey(room.code,token);
-
-    clearReconnectTimer(room.code,token);
-
-    const timer=setTimeout(()=>{
-      reconnectTimers.delete(key);
-
-      // User may have already reconnected under a new socket id.
-      const currentEntry=[...room.users.entries()]
-        .find(([,u])=>u.reconnectToken===token);
-
-      if(currentEntry && currentEntry[1].connected===false){
-        removePlayerById(room,currentEntry[0]);
-      }
-    },120000);
-
-    reconnectTimers.set(key,timer);
-    emitRoom(room);
-  }
-}
-
 function setTurn(room,userId){
+  const turnUser=room.users.get(userId);
+
+  if(!turnUser){
+    return;
+  }
+
+  const turnSessionId=turnUser.sessionId;
+
   room.turnPlayerId=userId;
   room.seconds=10;
 
@@ -671,7 +796,12 @@ function setTurn(room,userId){
 
     if(room.seconds<=0){
       clearInterval(room.turnTimer);
-      handlePass(room,userId,"timeout");
+
+      const liveUser=findUserBySession(room,turnSessionId);
+
+      if(liveUser){
+        handlePass(room,liveUser.id,"timeout");
+      }
     }else{
       emitRoom(room);
     }
@@ -685,7 +815,11 @@ function startAuction(room){
 
   room.rematchRequest=null;
 
-  for(const u of room.users.values()){
+  const orderedUsers=[...room.users.values()];
+  room.turnOrder=orderedUsers.map(u=>u.sessionId);
+  room.nextStarterIndex=0;
+
+  for(const u of orderedUsers){
     u.budget=180+(u.manager==="tycoon"?12:0);
     u.squad=[];
     u.lastMystery=null;
@@ -715,11 +849,19 @@ function nextRound(room){
   room.currentBid=p.base;
   room.highestBidder=null;
 
-  const users=[...room.users.values()];
+  // Strict alternation: A starts, then B, then A, then B...
+  const starterSessionId=room.turnOrder[room.nextStarterIndex%2];
+  room.nextStarterIndex=(room.nextStarterIndex+1)%2;
 
-  // Fairness: alternate who starts each round.
-  const starter=users[room.round%2];
-  setTurn(room,starter.id);
+  let starter=findUserBySession(room,starterSessionId);
+
+  if(!starter){
+    starter=[...room.users.values()][0];
+  }
+
+  if(starter){
+    setTurn(room,starter.id);
+  }
 }
 
 function awardCurrentPlayer(room,winner,reason){
@@ -1067,7 +1209,7 @@ io.on("connection",socket=>{
     }
   });
 
-  socket.on("create",({displayName}={},cb)=>{
+  socket.on("create",({displayName,sessionId}={},cb)=>{
     let code;
     do{code=makeCode();}while(rooms.has(code));
 
@@ -1085,7 +1227,9 @@ io.on("connection",socket=>{
       used:new Set(),
       turnTimer:null,
       result:null,
-      rematchRequest:null
+      rematchRequest:null,
+      turnOrder:[],
+      nextStarterIndex:0
     };
 
     const googleUser=socket.data.googleUser;
@@ -1094,14 +1238,24 @@ io.on("connection",socket=>{
       return cb?.({ok:false,error:"سجّل دخول بحساب Google الأول"});
     }
 
+    sessionId=cleanSessionId(sessionId);
+
+    if(!sessionId){
+      return cb?.({ok:false,error:"تعذر إنشاء جلسة اللاعب"});
+    }
+
     room.users.set(socket.id,{
       id:socket.id,
+      sessionId,
       googleSub:googleUser.sub,
+      googleName:googleUser.name,
+      email:googleUser.email || "",
       name:cleanDisplayName(displayName,googleUser.name),
       picture:googleUser.picture,
-      email:googleUser.email,
-      reconnectToken:makeReconnectToken(),
       connected:true,
+      disconnectedAt:null,
+      disconnectTimer:null,
+      joinedAt:Date.now(),
       manager:null,
       budget:180,
       squad:[],
@@ -1111,18 +1265,11 @@ io.on("connection",socket=>{
     rooms.set(code,room);
     socket.join(code);
 
-    const createdUser=room.users.get(socket.id);
-
-    cb?.({
-      ok:true,
-      code,
-      reconnectToken:createdUser.reconnectToken
-    });
-
+    cb?.({ok:true,code});
     emitRoom(room);
   });
 
-  socket.on("join",({code,displayName},cb)=>{
+  socket.on("join",({code,displayName,sessionId},cb)=>{
     code=String(code||"").trim().toUpperCase();
 
     const room=rooms.get(code);
@@ -1130,6 +1277,12 @@ io.on("connection",socket=>{
 
     if(!googleUser){
       return cb?.({ok:false,error:"سجّل دخول بحساب Google الأول"});
+    }
+
+    sessionId=cleanSessionId(sessionId);
+
+    if(!sessionId){
+      return cb?.({ok:false,error:"تعذر إنشاء جلسة اللاعب"});
     }
 
     if(!room) return cb?.({ok:false,error:"الغرفة غير موجودة"});
@@ -1142,12 +1295,16 @@ io.on("connection",socket=>{
 
     room.users.set(socket.id,{
       id:socket.id,
+      sessionId,
       googleSub:googleUser.sub,
+      googleName:googleUser.name,
+      email:googleUser.email || "",
       name:cleanDisplayName(displayName,googleUser.name),
       picture:googleUser.picture,
-      email:googleUser.email,
-      reconnectToken:makeReconnectToken(),
       connected:true,
+      disconnectedAt:null,
+      disconnectTimer:null,
+      joinedAt:Date.now(),
       manager:null,
       budget:180,
       squad:[],
@@ -1156,63 +1313,36 @@ io.on("connection",socket=>{
 
     socket.join(code);
 
-    const joinedUser=room.users.get(socket.id);
-
-    cb?.({
-      ok:true,
-      code,
-      reconnectToken:joinedUser.reconnectToken
-    });
-
+    cb?.({ok:true,code});
     emitRoom(room);
   });
 
-  socket.on("resume_room",({code,reconnectToken},cb)=>{
+  socket.on("resume_room",({code,sessionId},cb)=>{
     code=String(code||"").trim().toUpperCase();
-    reconnectToken=String(reconnectToken||"").trim();
+    sessionId=cleanSessionId(sessionId);
+
+    if(!code || !sessionId){
+      return cb?.({ok:false,error:"لا توجد جلسة محفوظة"});
+    }
 
     const room=rooms.get(code);
 
-    if(!room || !reconnectToken){
-      return cb?.({ok:false,error:"تعذر استعادة الغرفة"});
+    if(!room){
+      return cb?.({ok:false,error:"الروم انتهى أو السيرفر اتعمله Restart"});
     }
 
-    const oldEntry=[...room.users.entries()]
-      .find(([,u])=>u.reconnectToken===reconnectToken);
+    const user=findUserBySession(room,sessionId);
 
-    if(!oldEntry){
-      return cb?.({ok:false,error:"جلسة الغرفة انتهت"});
+    if(!user){
+      return cb?.({ok:false,error:"جلسة اللاعب غير موجودة داخل الروم"});
     }
 
-    const [oldId,user]=oldEntry;
-
-    clearReconnectTimer(room.code,reconnectToken);
-
-    if(oldId!==socket.id){
-      room.users.delete(oldId);
-
-      user.id=socket.id;
-      user.connected=true;
-
-      room.users.set(socket.id,user);
-
-      if(room.hostId===oldId) room.hostId=socket.id;
-      if(room.turnPlayerId===oldId) room.turnPlayerId=socket.id;
-      if(room.highestBidder===oldId) room.highestBidder=socket.id;
-
-      if(room.rematchRequest?.requesterId===oldId){
-        room.rematchRequest.requesterId=socket.id;
-      }
-    }else{
-      user.connected=true;
-    }
-
-    socket.join(room.code);
+    rebindUserToSocket(room,user,socket);
 
     cb?.({
       ok:true,
       code:room.code,
-      reconnectToken:user.reconnectToken,
+      phase:room.phase,
       user:{
         name:user.name,
         email:user.email || "",
@@ -1402,7 +1532,7 @@ io.on("connection",socket=>{
   });
 
   socket.on("disconnect",()=>{
-    scheduleReconnectGrace(socket);
+    scheduleSocketDisconnect(socket);
   });
 });
 
@@ -1417,7 +1547,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V11 — Real Players</title>
+<title>BID XI V11 — 1000 لاعب حقيقي</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1752,7 +1882,7 @@ button:active:not(:disabled){transform:translateY(1px)}
   <div class="brand">
     <div class="logo">⚽</div>
     <h1>BID <span>XI</span></h1>
-    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">1000 لاعب حقيقي • أقل OVR هو 80</small>
+    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">1000 لاعب حقيقي • أقل OVR في اللعبة 80</small>
   </div>
 
   <div class="card homeCard">
@@ -2005,7 +2135,7 @@ const FLAGS={
   GEO:"🇬🇪",COL:"🇨🇴",NOR:"🇳🇴",ARG:"🇦🇷",SWE:"🇸🇪",EGY:"🇪🇬",
   SLO:"🇸🇮",SUI:"🇨🇭",HUN:"🇭🇺",ECU:"🇪🇨",SCO:"🏴",KOR:"🇰🇷",
   JPN:"🇯🇵",NGA:"🇳🇬",POL:"🇵🇱",SRB:"🇷🇸",GUI:"🇬🇳",MEX:"🇲🇽",
-  DEN:"🇩🇰",CMR:"🇨🇲"
+  DEN:"🇩🇰",CMR:"🇨🇲",INT:"🌍"
 };
 
 const WIKI_TITLES={
@@ -2040,12 +2170,9 @@ function playerPhotoHtml(player,extraClass=""){
   if(!player) return "";
 
   const initial=esc((player.name||"?").charAt(0).toUpperCase());
-  const direct=player.img && /^https?:\/\//i.test(player.img) ? player.img : "";
 
   return (
-    '<div class="playerPhotoSlot '+extraClass+'" '+
-      'data-player-photo="'+esc(player.name)+'" '+
-      'data-direct-img="'+esc(direct)+'">'+
+    '<div class="playerPhotoSlot '+extraClass+'" data-player-photo="'+esc(player.name)+'">'+
       '<div class="photoFallback">'+initial+'</div>'+
     '</div>'
   );
@@ -2114,13 +2241,8 @@ function hydratePlayerImages(root=document){
 
     slot.dataset.loading="1";
     const name=slot.dataset.playerPhoto;
-    const directUrl=slot.dataset.directImg || "";
 
-    const photoPromise=directUrl
-      ? Promise.resolve(directUrl)
-      : getPlayerImage(name);
-
-    photoPromise.then(url=>{
+    getPlayerImage(name).then(url=>{
       if(!slot.isConnected) return;
 
       if(!url){
@@ -2149,16 +2271,30 @@ function hydratePlayerImages(root=document){
 
 const GOOGLE_CLIENT_ID="__GOOGLE_CLIENT_ID__";
 
+function makeClientSessionId(){
+  if(window.crypto?.randomUUID){
+    return window.crypto.randomUUID().replaceAll("-","");
+  }
+
+  return (
+    Date.now().toString(36)+
+    Math.random().toString(36).slice(2)+
+    Math.random().toString(36).slice(2)
+  );
+}
+
+let playerSessionId=localStorage.getItem("bidXiPlayerSessionId") || makeClientSessionId();
+localStorage.setItem("bidXiPlayerSessionId",playerSessionId);
+
+let savedRoomCode=localStorage.getItem("bidXiActiveRoom") || "";
+
 let myId=null;
 let code=null;
 let state=null;
 let match=null;
 let googleUser=null;
-
-let googleCredential=localStorage.getItem("bidXiGoogleCredential") || "";
-let savedRoomCode=localStorage.getItem("bidXiRoomCode") || "";
-let savedReconnectToken=localStorage.getItem("bidXiReconnectToken") || "";
-let isResuming=false;
+let googleCredential="";
+let resumeInProgress=false;
 
 let soundEnabled=true;
 let audioCtx=null;
@@ -2291,8 +2427,7 @@ function authWithServer(credential){
 
   socket.emit("google_auth",{credential},r=>{
     if(!r?.ok){
-      googleCredential="";
-      localStorage.removeItem("bidXiGoogleCredential");
+          googleCredential="";
       googleUser=null;
       $("authState").classList.remove("show");
       $("gameEntry").classList.remove("show");
@@ -2303,7 +2438,6 @@ function authWithServer(credential){
     }
 
     googleCredential=credential;
-    localStorage.setItem("bidXiGoogleCredential",credential);
     renderSignedInUser(r.user);
   });
 }
@@ -2356,75 +2490,46 @@ window.onGoogleLibraryLoad=()=>{
   renderGoogleButton();
 };
 
-function clearSavedRoom(){
-  savedRoomCode="";
-  savedReconnectToken="";
-  localStorage.removeItem("bidXiRoomCode");
-  localStorage.removeItem("bidXiReconnectToken");
-}
-
-function saveCurrentRoom(roomCode,reconnectToken){
-  savedRoomCode=roomCode || "";
-  savedReconnectToken=reconnectToken || "";
-
-  if(savedRoomCode){
-    localStorage.setItem("bidXiRoomCode",savedRoomCode);
-  }
-
-  if(savedReconnectToken){
-    localStorage.setItem("bidXiReconnectToken",savedReconnectToken);
-  }
-}
-
-function tryResumeRoom(){
-  if(!savedRoomCode || !savedReconnectToken){
-    return false;
-  }
-
-  if(isResuming) return true;
-  isResuming=true;
-
-  socket.emit("resume_room",{
-    code:savedRoomCode,
-    reconnectToken:savedReconnectToken
-  },r=>{
-    isResuming=false;
-
-    if(!r?.ok){
-      clearSavedRoom();
-
-      if(googleCredential){
-        authWithServer(googleCredential);
-      }else{
-        renderGoogleButton();
-      }
-
-      return;
-    }
-
-    code=r.code;
-    saveCurrentRoom(r.code,r.reconnectToken);
-
-    if(r.user){
-      renderSignedInUser(r.user);
-    }
-
-    toast("رجعت لنفس الروم ✅");
-  });
-
-  return true;
-}
-
 socket.on("connect",()=>{
   myId=socket.id;
 
-  // FIRST priority after refresh: return to the room.
-  if(tryResumeRoom()){
+  if(savedRoomCode && playerSessionId){
+    resumeInProgress=true;
+    $("homeError").textContent="جاري الرجوع للروم...";
+
+    socket.emit("resume_room",{
+      code:savedRoomCode,
+      sessionId:playerSessionId
+    },r=>{
+      resumeInProgress=false;
+
+      if(r?.ok){
+        code=r.code;
+        googleUser=r.user || googleUser;
+
+        if(googleUser){
+          $("authName").textContent=googleUser.name||"Google User";
+          $("authEmail").textContent=googleUser.email||"";
+          $("authAvatar").src=googleUser.picture||"";
+          $("displayName").value=googleUser.name||"";
+        }
+
+        $("homeError").textContent="";
+        return;
+      }
+
+      localStorage.removeItem("bidXiActiveRoom");
+      savedRoomCode="";
+      code=null;
+
+      $("homeError").textContent="الروم القديم انتهى. سجّل دخول لإنشاء أو دخول روم جديد.";
+      renderGoogleButton();
+    });
+
     return;
   }
 
-  // If not in a room, silently restore Google session when possible.
-  if(googleCredential){
+  if(googleCredential && googleUser){
     authWithServer(googleCredential);
   }else{
     renderGoogleButton();
@@ -2434,7 +2539,6 @@ socket.on("connect",()=>{
 $("changeGoogleBtn").onclick=()=>{
   googleUser=null;
   googleCredential="";
-  localStorage.removeItem("bidXiGoogleCredential");
 
   $("authState").classList.remove("show");
   $("gameEntry").classList.remove("show");
@@ -2471,13 +2575,14 @@ $("createBtn").onclick=()=>{
 
   const displayName=$("displayName").value.trim();
 
-  socket.emit("create",{displayName},r=>{
+  socket.emit("create",{displayName,sessionId:playerSessionId},r=>{
     if(!r?.ok){
       return $("homeError").textContent=r?.error||"تعذر إنشاء الغرفة";
     }
 
     code=r.code;
-    saveCurrentRoom(r.code,r.reconnectToken);
+    savedRoomCode=r.code;
+    localStorage.setItem("bidXiActiveRoom",r.code);
     $("homeError").textContent="";
     show("manager");
   });
@@ -2496,13 +2601,14 @@ $("joinBtn").onclick=()=>{
 
   const displayName=$("displayName").value.trim();
 
-  socket.emit("join",{code:room,displayName},r=>{
+  socket.emit("join",{code:room,displayName,sessionId:playerSessionId},r=>{
     if(!r?.ok){
       return $("homeError").textContent=r?.error||"تعذر دخول الغرفة";
     }
 
     code=r.code;
-    saveCurrentRoom(r.code,r.reconnectToken);
+    savedRoomCode=r.code;
+    localStorage.setItem("bidXiActiveRoom",r.code);
     $("homeError").textContent="";
     show("manager");
   });
@@ -2562,7 +2668,8 @@ function resetLocalRoomState(){
   code=null;
   state=null;
   match=null;
-  clearSavedRoom();
+  savedRoomCode="";
+  localStorage.removeItem("bidXiActiveRoom");
   $("joinCode").value="";
 }
 
@@ -2584,8 +2691,11 @@ function performLogout(){
 
     googleUser=null;
     googleCredential="";
-    localStorage.removeItem("bidXiGoogleCredential");
-    clearSavedRoom();
+
+    localStorage.removeItem("bidXiActiveRoom");
+    localStorage.removeItem("bidXiPlayerSessionId");
+    playerSessionId=makeClientSessionId();
+    localStorage.setItem("bidXiPlayerSessionId",playerSessionId);
 
     $("authState").classList.remove("show");
     $("gameEntry").classList.remove("show");
@@ -2636,6 +2746,11 @@ $("declineRematchBtn").onclick=()=>{
 };
 
 socket.on("state",s=>{
+  if(s?.code){
+    savedRoomCode=s.code;
+    localStorage.setItem("bidXiActiveRoom",s.code);
+  }
+
   const oldPhase=previousPhase;
   previousPhase=s.phase;
 
@@ -3046,11 +3161,30 @@ function renderResult(r){
 </html>
 `;
 
-app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
+app.get("/",(req,res)=>res.type("html").send(
+  PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)
+));
 
-server.listen(PORT,()=>{
-  console.log("BID XI V11 Real Players + Refresh Resume running on port "+PORT);
-  if(!GOOGLE_CLIENT_ID){
-    console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
+async function boot(){
+  try{
+    await loadRealPlayerDatabase();
+  }catch(err){
+    console.error("Real player database load failed:",err?.message||err);
   }
-});
+
+  server.listen(PORT,()=>{
+    console.log("BID XI V11 Real Players + Resume running on port "+PORT);
+    console.log(
+      "Player pool:",
+      PLAYER_POOL.length,
+      "| minimum OVR:",
+      Math.min(...PLAYER_POOL.map(p=>p.ovr))
+    );
+
+    if(!GOOGLE_CLIENT_ID){
+      console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
+    }
+  });
+}
+
+boot();
