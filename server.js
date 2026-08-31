@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const crypto = require("crypto");
 const { Server } = require("socket.io");
 
 const app = express();
@@ -7,6 +8,42 @@ const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+
+const AUTH_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const authSessions = new Map();
+
+function newAuthSession(user){
+  const token = crypto.randomBytes(32).toString("hex");
+
+  authSessions.set(token,{
+    user:{...user},
+    expiresAt:Date.now()+AUTH_SESSION_TTL_MS
+  });
+
+  return token;
+}
+
+function getAuthSession(token){
+  const key=String(token||"").trim();
+  if(!key) return null;
+
+  const session=authSessions.get(key);
+  if(!session) return null;
+
+  if(session.expiresAt<=Date.now()){
+    authSessions.delete(key);
+    return null;
+  }
+
+  // Sliding 30-day session.
+  session.expiresAt=Date.now()+AUTH_SESSION_TTL_MS;
+  return session.user;
+}
+
+function deleteAuthSession(token){
+  const key=String(token||"").trim();
+  if(key) authSessions.delete(key);
+}
 
 // ============================================================
 // BID XI V4 — Arabic / Turn Based Auction
@@ -1194,8 +1231,11 @@ io.on("connection",socket=>{
         picture:String(payload.picture||"")
       };
 
+      const authToken=newAuthSession(socket.data.googleUser);
+
       cb?.({
         ok:true,
+        authToken,
         user:{
           name:socket.data.googleUser.name,
           email:socket.data.googleUser.email,
@@ -1207,6 +1247,25 @@ io.on("connection",socket=>{
       console.error("Google auth error:",err?.message||err);
       cb?.({ok:false,error:"تعذر الاتصال بخدمة Google الآن"});
     }
+  });
+
+  socket.on("resume_auth",({authToken},cb)=>{
+    const user=getAuthSession(authToken);
+
+    if(!user){
+      return cb?.({ok:false,error:"جلسة تسجيل الدخول انتهت"});
+    }
+
+    socket.data.googleUser={...user};
+
+    cb?.({
+      ok:true,
+      user:{
+        name:user.name,
+        email:user.email || "",
+        picture:user.picture || ""
+      }
+    });
   });
 
   socket.on("create",({displayName,sessionId}={},cb)=>{
@@ -1525,8 +1584,9 @@ io.on("connection",socket=>{
     cb?.({ok:true});
   });
 
-  socket.on("logout",(_,cb)=>{
+  socket.on("logout",({authToken}={},cb)=>{
     removeSocketFromAllRooms(socket);
+    deleteAuthSession(authToken);
     socket.data.googleUser=null;
     cb?.({ok:true});
   });
@@ -1547,7 +1607,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V11 — 1000 لاعب حقيقي</title>
+<title>BID XI V12 — تسجيل دخول دائم</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1887,7 +1947,7 @@ button:active:not(:disabled){transform:translateY(1px)}
 
   <div class="card homeCard">
     <small>تسجيل الدخول</small>
-    <div class="googleHint">اضغط زر Google وسيظهر لك اختيار حسابات Google المسجّل دخولها في المتصفح. اختار الحساب فقط؛ اللعبة لا تطلب منك كتابة الإيميل يدويًا.</div>
+    <div class="googleHint">أول مرة فقط اختار حساب Google. بعد كده اللعبة هتفتكر تسجيل دخولك تلقائيًا، ومش هتطلب منك تختار الحساب تاني إلا لو ضغطت تسجيل خروج أو تغيير الحساب.</div>
 
     <div id="googleButton" class="googleWrap"></div>
     <div class="help" style="text-align:center">لو عندك أكتر من حساب Google مسجّل في المتصفح، Google هيعرضهم لك للاختيار. مش مطلوب تكتب الإيميل داخل اللعبة.</div>
@@ -2294,6 +2354,7 @@ let state=null;
 let match=null;
 let googleUser=null;
 let googleCredential="";
+let authToken=localStorage.getItem("bidXiAuthToken") || "";
 let resumeInProgress=false;
 
 let soundEnabled=true;
@@ -2438,6 +2499,12 @@ function authWithServer(credential){
     }
 
     googleCredential=credential;
+
+    if(r.authToken){
+      authToken=r.authToken;
+      localStorage.setItem("bidXiAuthToken",authToken);
+    }
+
     renderSignedInUser(r.user);
   });
 }
@@ -2450,6 +2517,25 @@ window.handleGoogleCredential=function(response){
 
   authWithServer(response.credential);
 };
+
+function resumeSavedLogin(done){
+  if(!authToken){
+    done?.(false);
+    return;
+  }
+
+  socket.emit("resume_auth",{authToken},r=>{
+    if(!r?.ok){
+      authToken="";
+      localStorage.removeItem("bidXiAuthToken");
+      done?.(false);
+      return;
+    }
+
+    renderSignedInUser(r.user);
+    done?.(true);
+  });
+}
 
 function renderGoogleButton(){
   if(!GOOGLE_CLIENT_ID){
@@ -2493,6 +2579,7 @@ window.onGoogleLibraryLoad=()=>{
 socket.on("connect",()=>{
   myId=socket.id;
 
+  // لو اللاعب كان داخل روم: الأول نحاول نرجعه لنفس الروم مباشرة.
   if(savedRoomCode && playerSessionId){
     resumeInProgress=true;
     $("homeError").textContent="جاري الرجوع للروم...";
@@ -2518,25 +2605,38 @@ socket.on("connect",()=>{
         return;
       }
 
+      // الروم القديم انتهى، لكن ما نعملش Sign Out.
       localStorage.removeItem("bidXiActiveRoom");
       savedRoomCode="";
       code=null;
 
-      $("homeError").textContent="الروم القديم انتهى. سجّل دخول لإنشاء أو دخول روم جديد.";
-      renderGoogleButton();
+      resumeSavedLogin(ok=>{
+        if(!ok){
+          $("homeError").textContent="";
+          renderGoogleButton();
+        }
+      });
     });
 
     return;
   }
 
-  if(googleCredential && googleUser){
-    authWithServer(googleCredential);
-  }else{
-    renderGoogleButton();
-  }
+  // مش داخل روم: افتح اللعبة بالحساب المحفوظ تلقائيًا.
+  resumeSavedLogin(ok=>{
+    if(!ok){
+      renderGoogleButton();
+    }
+  });
 });
 
 $("changeGoogleBtn").onclick=()=>{
+  if(authToken){
+    socket.emit("logout",{authToken},()=>{});
+  }
+
+  authToken="";
+  localStorage.removeItem("bidXiAuthToken");
+
   googleUser=null;
   googleCredential="";
 
@@ -2686,12 +2786,14 @@ function goHomeKeepingGoogle(){
 }
 
 function performLogout(){
-  socket.emit("logout",{},()=>{
+  socket.emit("logout",{authToken},()=>{
     resetLocalRoomState();
 
     googleUser=null;
     googleCredential="";
+    authToken="";
 
+    localStorage.removeItem("bidXiAuthToken");
     localStorage.removeItem("bidXiActiveRoom");
     localStorage.removeItem("bidXiPlayerSessionId");
     playerSessionId=makeClientSessionId();
@@ -3173,7 +3275,7 @@ async function boot(){
   }
 
   server.listen(PORT,()=>{
-    console.log("BID XI V11 Real Players + Resume running on port "+PORT);
+    console.log("BID XI V12 Persistent Sign-In running on port "+PORT);
     console.log(
       "Player pool:",
       PLAYER_POOL.length,
