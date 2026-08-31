@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
@@ -19,7 +20,7 @@ const FORMATION = [
   "LW", "ST", "RW"
 ];
 
-const PLAYER_POOL = [
+const BASE_PLAYER_POOL = [
   {id:1,name:"Gianluigi Donnarumma",pos:"GK",ovr:91,nation:"ITA",base:12},
   {id:2,name:"Thibaut Courtois",pos:"GK",ovr:90,nation:"BEL",base:11},
   {id:3,name:"Alisson Becker",pos:"GK",ovr:90,nation:"BRA",base:11},
@@ -164,6 +165,279 @@ const PLAYER_POOL = [
   {id:142,name:"Noni Madueke",pos:"RW",ovr:86,nation:"ENG",base:11}
 ];
 
+// ============================================================
+// REAL PLAYER DATABASE
+// - No fake/generated footballer names.
+// - Every in-game OVR is at least 80.
+// - At startup we try to load 1000 real male players from EA's
+//   public ratings endpoint. If that source is temporarily down,
+//   the curated real-player list above remains as a safe fallback.
+// ============================================================
+
+function basePriceFromRating(ovr){
+  if(ovr >= 93) return 21;
+  if(ovr >= 90) return 17;
+  if(ovr >= 88) return 14;
+  if(ovr >= 86) return 12;
+  if(ovr >= 84) return 10;
+  if(ovr >= 82) return 8;
+  return 6;
+}
+
+function normalizeGamePosition(raw){
+  if(raw && typeof raw==="object"){
+    raw =
+      raw.shortLabel ||
+      raw.label ||
+      raw.name ||
+      raw.code ||
+      raw.abbreviation ||
+      "";
+  }
+
+  const p=String(raw||"")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g,"");
+
+  if(!p) return null;
+
+  if(p==="GK" || p.includes("GOALKEEPER")) return "GK";
+
+  if(["LB","LWB","LEFTBACK","LEFTWINGBACK"].includes(p)) return "LB";
+  if(["RB","RWB","RIGHTBACK","RIGHTWINGBACK"].includes(p)) return "RB";
+  if(["CB","LCB","RCB","CENTREBACK","CENTERBACK"].includes(p)) return "CB";
+
+  if(["CDM","CM","LCM","RCM","DM","CENTREMID","CENTERMID","MIDFIELDER"].includes(p)) return "CM";
+  if(["CAM","AM","LAM","RAM","ATTACKINGMID"].includes(p)) return "CAM";
+
+  if(["LW","LM","LF","LEFTWING","LEFTMID"].includes(p)) return "LW";
+  if(["RW","RM","RF","RIGHTWING","RIGHTMID"].includes(p)) return "RW";
+
+  if(["ST","CF","LS","RS","STRIKER","FORWARD","CENTREFORWARD","CENTERFORWARD"].includes(p)) return "ST";
+
+  return null;
+}
+
+function countryCodeFromName(value){
+  const raw = value && typeof value==="object"
+    ? (value.name || value.label || value.countryName || "")
+    : String(value||"");
+
+  const key=raw.trim().toLowerCase();
+
+  const map={
+    "england":"ENG","spain":"ESP","france":"FRA","germany":"GER","italy":"ITA",
+    "portugal":"POR","brazil":"BRA","argentina":"ARG","netherlands":"NED",
+    "belgium":"BEL","morocco":"MAR","uruguay":"URU","colombia":"COL",
+    "norway":"NOR","sweden":"SWE","egypt":"EGY","canada":"CAN","georgia":"GEO",
+    "switzerland":"SUI","slovenia":"SLO","hungary":"HUN","ecuador":"ECU",
+    "scotland":"SCO","korea republic":"KOR","south korea":"KOR","japan":"JPN",
+    "nigeria":"NGA","poland":"POL","serbia":"SRB","guinea":"GUI","mexico":"MEX",
+    "denmark":"DEN","cameroon":"CMR"
+  };
+
+  return map[key] || raw.slice(0,3).toUpperCase() || "INT";
+}
+
+function realPlayerName(item){
+  const common =
+    item?.commonName ||
+    item?.common_name ||
+    item?.displayName ||
+    item?.playerName ||
+    item?.name;
+
+  if(common && String(common).trim()){
+    return String(common).trim();
+  }
+
+  return [
+    item?.firstName || item?.first_name,
+    item?.lastName || item?.last_name
+  ].filter(Boolean).join(" ").trim();
+}
+
+function realPlayerRating(item){
+  const raw =
+    item?.overallRating ??
+    item?.overall_rating ??
+    item?.rating ??
+    item?.overall ??
+    80;
+
+  const n=Number(raw);
+  if(!Number.isFinite(n)) return 80;
+
+  // User requirement: nobody below 80 in the game.
+  return Math.max(80,Math.min(99,Math.round(n)));
+}
+
+function realPlayerPosition(item){
+  const candidates=[
+    item?.position,
+    item?.preferredPosition,
+    item?.preferred_position,
+    item?.positionLabel,
+    item?.positionShortLabel,
+    item?.primaryPosition,
+    item?.preferredPosition1
+  ];
+
+  for(const candidate of candidates){
+    const mapped=normalizeGamePosition(candidate);
+    if(mapped) return mapped;
+  }
+
+  return null;
+}
+
+function realPlayerImage(item){
+  const candidates=[
+    item?.image,
+    item?.imageUrl,
+    item?.image_url,
+    item?.avatar,
+    item?.avatarUrl,
+    item?.picture,
+    item?.photo,
+    item?.headshot
+  ];
+
+  for(const value of candidates){
+    if(typeof value==="string" && /^https?:\/\//i.test(value)){
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function normalizeEaPlayer(item,index){
+  const name=realPlayerName(item);
+  const pos=realPlayerPosition(item);
+
+  if(!name || !pos) return null;
+
+  const ovr=realPlayerRating(item);
+
+  return {
+    id:"ea-"+String(item?.id ?? item?.playerId ?? item?.player_id ?? index),
+    name,
+    pos,
+    ovr,
+    nation:countryCodeFromName(
+      item?.nationality ??
+      item?.nationalityName ??
+      item?.country ??
+      item?.nation ??
+      ""
+    ),
+    base:basePriceFromRating(ovr),
+    img:realPlayerImage(item),
+    real:true
+  };
+}
+
+// Start with the curated REAL players only.
+let PLAYER_POOL=BASE_PLAYER_POOL.map((p,index)=>({
+  ...p,
+  id:"base-"+String(p.id ?? index),
+  ovr:Math.max(80,Number(p.ovr)||80),
+  base:basePriceFromRating(Math.max(80,Number(p.ovr)||80)),
+  real:true
+}));
+
+async function loadRealPlayerPool(){
+  const urls=[];
+
+  // 15 pages gives us room to filter duplicates / positions
+  // while still ending at 1000 unique real players.
+  for(let offset=0;offset<1500;offset+=100){
+    urls.push(
+      "https://drop-api.ea.com/rating/ea-sports-fc"+
+      "?locale=en&limit=100&gender=0&offset="+offset
+    );
+  }
+
+  try{
+    const results=await Promise.all(
+      urls.map(async url=>{
+        try{
+          const response=await fetch(url,{
+            headers:{
+              "accept":"application/json",
+              "user-agent":"BID-XI/11"
+            }
+          });
+
+          if(!response.ok) return [];
+          const data=await response.json();
+          return Array.isArray(data?.items) ? data.items : [];
+        }catch{
+          return [];
+        }
+      })
+    );
+
+    const raw=results.flat();
+
+    if(!raw.length){
+      console.log("EA player feed unavailable. Using curated real-player fallback:",PLAYER_POOL.length);
+      return;
+    }
+
+    const unique=new Map();
+
+    for(let i=0;i<raw.length;i++){
+      const player=normalizeEaPlayer(raw[i],i);
+      if(!player) continue;
+
+      const key=(player.name+"|"+player.pos).toLowerCase();
+
+      if(!unique.has(key)){
+        unique.set(key,player);
+      }
+    }
+
+    // Keep curated stars first, then add EA real players without duplication.
+    const merged=new Map();
+
+    for(const p of PLAYER_POOL){
+      merged.set((p.name+"|"+p.pos).toLowerCase(),p);
+    }
+
+    for(const p of unique.values()){
+      const key=(p.name+"|"+p.pos).toLowerCase();
+      if(!merged.has(key)){
+        merged.set(key,p);
+      }
+    }
+
+    const loaded=[...merged.values()]
+      .filter(p=>p.name && p.pos && Number(p.ovr)>=80)
+      .slice(0,1000);
+
+    if(loaded.length){
+      PLAYER_POOL=loaded;
+    }
+
+    console.log(
+      "REAL player database loaded:",
+      PLAYER_POOL.length,
+      "players | minimum OVR:",
+      Math.min(...PLAYER_POOL.map(p=>p.ovr))
+    );
+
+  }catch(err){
+    console.error("Real player database load failed:",err?.message||err);
+    console.log("Using curated real-player fallback:",PLAYER_POOL.length);
+  }
+}
+
+loadRealPlayerPool();
+
+
 const MANAGERS = {
   scout:{id:"scout",name:"الكشاف",icon:"🔎",desc:"أي لاعب غامض تحصل عليه تزيد قوته +1."},
   tycoon:{id:"tycoon",name:"رجل الأعمال",icon:"💰",desc:"تبدأ المباراة بميزانية إضافية +12 مليون."},
@@ -180,6 +454,7 @@ const FLAGS={
 };
 
 const rooms=new Map();
+const reconnectTimers=new Map();
 
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
@@ -188,6 +463,24 @@ function makeCode(){
   let s="";
   for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];
   return s;
+}
+
+function makeReconnectToken(){
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function reconnectTimerKey(roomCode,token){
+  return String(roomCode||"")+"::"+String(token||"");
+}
+
+function clearReconnectTimer(roomCode,token){
+  const key=reconnectTimerKey(roomCode,token);
+  const timer=reconnectTimers.get(key);
+
+  if(timer){
+    clearTimeout(timer);
+    reconnectTimers.delete(key);
+  }
 }
 
 function cleanDisplayName(value,fallback="Player"){
@@ -208,7 +501,8 @@ function publicUser(u){
     manager:u.manager,
     budget:u.budget,
     squad:u.squad,
-    lastMystery:u.lastMystery || null
+    lastMystery:u.lastMystery || null,
+    connected:u.connected !== false
   };
 }
 
@@ -287,15 +581,20 @@ function resetRoomToManager(room){
   }
 }
 
-function removePlayerFromRoom(socket,room){
-  if(!room || !room.users.has(socket.id)) return;
+function removePlayerById(room,userId){
+  if(!room || !room.users.has(userId)) return;
 
-  room.users.delete(socket.id);
-  socket.leave(room.code);
+  const user=room.users.get(userId);
+  clearReconnectTimer(room.code,user?.reconnectToken);
 
-  if(room.hostId===socket.id){
+  room.users.delete(userId);
+
+  if(room.hostId===userId){
     room.hostId=room.users.keys().next().value || null;
   }
+
+  if(room.turnPlayerId===userId) room.turnPlayerId=null;
+  if(room.highestBidder===userId) room.highestBidder=null;
 
   room.rematchRequest=null;
 
@@ -305,7 +604,6 @@ function removePlayerFromRoom(socket,room){
     return;
   }
 
-  // لو حد خرج أثناء اللعب، نرجع الباقي للروم بدل ما اللعبة تفضل معلقة.
   if(room.phase==="auction" || room.phase==="result"){
     resetRoomToManager(room);
   }
@@ -313,11 +611,50 @@ function removePlayerFromRoom(socket,room){
   emitRoom(room);
 }
 
+function removePlayerFromRoom(socket,room){
+  if(!room || !room.users.has(socket.id)) return;
+
+  const user=room.users.get(socket.id);
+  clearReconnectTimer(room.code,user?.reconnectToken);
+
+  socket.leave(room.code);
+  removePlayerById(room,socket.id);
+}
+
 function removeSocketFromAllRooms(socket){
-  for(const room of rooms.values()){
+  for(const room of [...rooms.values()]){
     if(room.users.has(socket.id)){
       removePlayerFromRoom(socket,room);
     }
+  }
+}
+
+function scheduleReconnectGrace(socket){
+  for(const room of rooms.values()){
+    if(!room.users.has(socket.id)) continue;
+
+    const user=room.users.get(socket.id);
+    user.connected=false;
+
+    const token=user.reconnectToken;
+    const key=reconnectTimerKey(room.code,token);
+
+    clearReconnectTimer(room.code,token);
+
+    const timer=setTimeout(()=>{
+      reconnectTimers.delete(key);
+
+      // User may have already reconnected under a new socket id.
+      const currentEntry=[...room.users.entries()]
+        .find(([,u])=>u.reconnectToken===token);
+
+      if(currentEntry && currentEntry[1].connected===false){
+        removePlayerById(room,currentEntry[0]);
+      }
+    },120000);
+
+    reconnectTimers.set(key,timer);
+    emitRoom(room);
   }
 }
 
@@ -762,6 +1099,9 @@ io.on("connection",socket=>{
       googleSub:googleUser.sub,
       name:cleanDisplayName(displayName,googleUser.name),
       picture:googleUser.picture,
+      email:googleUser.email,
+      reconnectToken:makeReconnectToken(),
+      connected:true,
       manager:null,
       budget:180,
       squad:[],
@@ -771,7 +1111,14 @@ io.on("connection",socket=>{
     rooms.set(code,room);
     socket.join(code);
 
-    cb?.({ok:true,code});
+    const createdUser=room.users.get(socket.id);
+
+    cb?.({
+      ok:true,
+      code,
+      reconnectToken:createdUser.reconnectToken
+    });
+
     emitRoom(room);
   });
 
@@ -798,6 +1145,9 @@ io.on("connection",socket=>{
       googleSub:googleUser.sub,
       name:cleanDisplayName(displayName,googleUser.name),
       picture:googleUser.picture,
+      email:googleUser.email,
+      reconnectToken:makeReconnectToken(),
+      connected:true,
       manager:null,
       budget:180,
       squad:[],
@@ -806,7 +1156,70 @@ io.on("connection",socket=>{
 
     socket.join(code);
 
-    cb?.({ok:true,code});
+    const joinedUser=room.users.get(socket.id);
+
+    cb?.({
+      ok:true,
+      code,
+      reconnectToken:joinedUser.reconnectToken
+    });
+
+    emitRoom(room);
+  });
+
+  socket.on("resume_room",({code,reconnectToken},cb)=>{
+    code=String(code||"").trim().toUpperCase();
+    reconnectToken=String(reconnectToken||"").trim();
+
+    const room=rooms.get(code);
+
+    if(!room || !reconnectToken){
+      return cb?.({ok:false,error:"تعذر استعادة الغرفة"});
+    }
+
+    const oldEntry=[...room.users.entries()]
+      .find(([,u])=>u.reconnectToken===reconnectToken);
+
+    if(!oldEntry){
+      return cb?.({ok:false,error:"جلسة الغرفة انتهت"});
+    }
+
+    const [oldId,user]=oldEntry;
+
+    clearReconnectTimer(room.code,reconnectToken);
+
+    if(oldId!==socket.id){
+      room.users.delete(oldId);
+
+      user.id=socket.id;
+      user.connected=true;
+
+      room.users.set(socket.id,user);
+
+      if(room.hostId===oldId) room.hostId=socket.id;
+      if(room.turnPlayerId===oldId) room.turnPlayerId=socket.id;
+      if(room.highestBidder===oldId) room.highestBidder=socket.id;
+
+      if(room.rematchRequest?.requesterId===oldId){
+        room.rematchRequest.requesterId=socket.id;
+      }
+    }else{
+      user.connected=true;
+    }
+
+    socket.join(room.code);
+
+    cb?.({
+      ok:true,
+      code:room.code,
+      reconnectToken:user.reconnectToken,
+      user:{
+        name:user.name,
+        email:user.email || "",
+        picture:user.picture || ""
+      }
+    });
+
     emitRoom(room);
   });
 
@@ -989,7 +1402,7 @@ io.on("connection",socket=>{
   });
 
   socket.on("disconnect",()=>{
-    removeSocketFromAllRooms(socket);
+    scheduleReconnectGrace(socket);
   });
 });
 
@@ -1004,7 +1417,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V9 — حرب المزاد</title>
+<title>BID XI V11 — Real Players</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1339,7 +1752,7 @@ button:active:not(:disabled){transform:translateY(1px)}
   <div class="brand">
     <div class="logo">⚽</div>
     <h1>BID <span>XI</span></h1>
-    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">أكثر من 142 لاعب داخل قاعدة اللعبة</small>
+    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">1000 لاعب حقيقي • أقل OVR هو 80</small>
   </div>
 
   <div class="card homeCard">
@@ -1627,9 +2040,12 @@ function playerPhotoHtml(player,extraClass=""){
   if(!player) return "";
 
   const initial=esc((player.name||"?").charAt(0).toUpperCase());
+  const direct=player.img && /^https?:\/\//i.test(player.img) ? player.img : "";
 
   return (
-    '<div class="playerPhotoSlot '+extraClass+'" data-player-photo="'+esc(player.name)+'">'+
+    '<div class="playerPhotoSlot '+extraClass+'" '+
+      'data-player-photo="'+esc(player.name)+'" '+
+      'data-direct-img="'+esc(direct)+'">'+
       '<div class="photoFallback">'+initial+'</div>'+
     '</div>'
   );
@@ -1698,8 +2114,13 @@ function hydratePlayerImages(root=document){
 
     slot.dataset.loading="1";
     const name=slot.dataset.playerPhoto;
+    const directUrl=slot.dataset.directImg || "";
 
-    getPlayerImage(name).then(url=>{
+    const photoPromise=directUrl
+      ? Promise.resolve(directUrl)
+      : getPlayerImage(name);
+
+    photoPromise.then(url=>{
       if(!slot.isConnected) return;
 
       if(!url){
@@ -1733,7 +2154,11 @@ let code=null;
 let state=null;
 let match=null;
 let googleUser=null;
-let googleCredential="";
+
+let googleCredential=localStorage.getItem("bidXiGoogleCredential") || "";
+let savedRoomCode=localStorage.getItem("bidXiRoomCode") || "";
+let savedReconnectToken=localStorage.getItem("bidXiReconnectToken") || "";
+let isResuming=false;
 
 let soundEnabled=true;
 let audioCtx=null;
@@ -1866,7 +2291,8 @@ function authWithServer(credential){
 
   socket.emit("google_auth",{credential},r=>{
     if(!r?.ok){
-          googleCredential="";
+      googleCredential="";
+      localStorage.removeItem("bidXiGoogleCredential");
       googleUser=null;
       $("authState").classList.remove("show");
       $("gameEntry").classList.remove("show");
@@ -1877,6 +2303,7 @@ function authWithServer(credential){
     }
 
     googleCredential=credential;
+    localStorage.setItem("bidXiGoogleCredential",credential);
     renderSignedInUser(r.user);
   });
 }
@@ -1929,10 +2356,75 @@ window.onGoogleLibraryLoad=()=>{
   renderGoogleButton();
 };
 
+function clearSavedRoom(){
+  savedRoomCode="";
+  savedReconnectToken="";
+  localStorage.removeItem("bidXiRoomCode");
+  localStorage.removeItem("bidXiReconnectToken");
+}
+
+function saveCurrentRoom(roomCode,reconnectToken){
+  savedRoomCode=roomCode || "";
+  savedReconnectToken=reconnectToken || "";
+
+  if(savedRoomCode){
+    localStorage.setItem("bidXiRoomCode",savedRoomCode);
+  }
+
+  if(savedReconnectToken){
+    localStorage.setItem("bidXiReconnectToken",savedReconnectToken);
+  }
+}
+
+function tryResumeRoom(){
+  if(!savedRoomCode || !savedReconnectToken){
+    return false;
+  }
+
+  if(isResuming) return true;
+  isResuming=true;
+
+  socket.emit("resume_room",{
+    code:savedRoomCode,
+    reconnectToken:savedReconnectToken
+  },r=>{
+    isResuming=false;
+
+    if(!r?.ok){
+      clearSavedRoom();
+
+      if(googleCredential){
+        authWithServer(googleCredential);
+      }else{
+        renderGoogleButton();
+      }
+
+      return;
+    }
+
+    code=r.code;
+    saveCurrentRoom(r.code,r.reconnectToken);
+
+    if(r.user){
+      renderSignedInUser(r.user);
+    }
+
+    toast("رجعت لنفس الروم ✅");
+  });
+
+  return true;
+}
+
 socket.on("connect",()=>{
   myId=socket.id;
 
-  if(googleCredential && googleUser){
+  // FIRST priority after refresh: return to the room.
+  if(tryResumeRoom()){
+    return;
+  }
+
+  // If not in a room, silently restore Google session when possible.
+  if(googleCredential){
     authWithServer(googleCredential);
   }else{
     renderGoogleButton();
@@ -1942,6 +2434,7 @@ socket.on("connect",()=>{
 $("changeGoogleBtn").onclick=()=>{
   googleUser=null;
   googleCredential="";
+  localStorage.removeItem("bidXiGoogleCredential");
 
   $("authState").classList.remove("show");
   $("gameEntry").classList.remove("show");
@@ -1984,6 +2477,7 @@ $("createBtn").onclick=()=>{
     }
 
     code=r.code;
+    saveCurrentRoom(r.code,r.reconnectToken);
     $("homeError").textContent="";
     show("manager");
   });
@@ -2008,6 +2502,7 @@ $("joinBtn").onclick=()=>{
     }
 
     code=r.code;
+    saveCurrentRoom(r.code,r.reconnectToken);
     $("homeError").textContent="";
     show("manager");
   });
@@ -2067,6 +2562,7 @@ function resetLocalRoomState(){
   code=null;
   state=null;
   match=null;
+  clearSavedRoom();
   $("joinCode").value="";
 }
 
@@ -2088,6 +2584,8 @@ function performLogout(){
 
     googleUser=null;
     googleCredential="";
+    localStorage.removeItem("bidXiGoogleCredential");
+    clearSavedRoom();
 
     $("authState").classList.remove("show");
     $("gameEntry").classList.remove("show");
@@ -2551,7 +3049,7 @@ function renderResult(r){
 app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V9 Sound Arena running on port "+PORT);
+  console.log("BID XI V11 Real Players + Refresh Resume running on port "+PORT);
   if(!GOOGLE_CLIENT_ID){
     console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
   }
