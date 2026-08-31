@@ -1004,7 +1004,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V8 — حرب المزاد</title>
+<title>BID XI V9 — حرب المزاد</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1022,7 +1022,8 @@ body{
 }
 button,input{font:inherit}
 button{cursor:pointer}
-.app{max-width:620px;margin:auto;padding:15px 14px 44px;min-height:100vh}
+.app{max-width:1080px;margin:auto;padding:15px 14px 44px;min-height:100vh}
+#home,#manager{max-width:620px;margin-left:auto;margin-right:auto}
 .screen{display:none}.screen.active{display:block}
 .hidden{display:none!important}.muted{color:var(--muted)}
 .card{
@@ -1104,6 +1105,78 @@ button:active:not(:disabled){transform:translateY(1px)}
 }
 .turnBanner.mine{border-color:rgba(67,244,125,.55);background:rgba(67,244,125,.07);color:#b9ffce}
 .turnBanner.theirs{color:#ffdca3}
+
+.soundToggle{
+  width:42px;height:42px;min-height:42px;padding:0;border-radius:50%;
+  display:grid;place-items:center;font-size:18px;background:#0d1b15
+}
+.auctionArena{
+  display:grid;
+  grid-template-columns:190px minmax(0,1fr) 190px;
+  gap:12px;
+  align-items:stretch;
+  direction:ltr;
+}
+.sideBudget{
+  min-width:0;
+  padding:14px 12px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  border:1px solid var(--line);
+  border-radius:22px;
+  background:linear-gradient(180deg,#0e1b16,#08110d);
+  direction:rtl;
+  position:relative;
+  overflow:hidden;
+}
+.sideBudget.activeTurn{
+  border-color:rgba(67,244,125,.75);
+  box-shadow:inset 0 0 0 1px rgba(67,244,125,.12)
+}
+.sideBudget.leading{
+  background:linear-gradient(180deg,rgba(255,217,105,.10),#08110d)
+}
+.sideBudget .sideTag{
+  font-size:9px;color:var(--muted);font-weight:900;margin-bottom:7px
+}
+.sideBudget .sideName{
+  font-size:15px;font-weight:1000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.sideBudget .sideMoney{
+  display:flex;align-items:baseline;gap:5px;margin-top:8px;direction:ltr
+}
+.sideBudget .sideMoney strong{font-size:30px;color:var(--gold)}
+.sideBudget .sideMoney span{font-size:10px;color:var(--muted);font-weight:900}
+.sideBudget .sideStatus{
+  margin-top:8px;padding-top:8px;border-top:1px solid var(--line);
+  font-size:10px;color:var(--muted);line-height:1.5
+}
+.sideMystery{
+  margin-bottom:11px;padding:8px;border-radius:14px;
+  border:1px solid rgba(166,136,255,.28);
+  background:rgba(166,136,255,.06);
+  text-align:center
+}
+.sideMystery .sideMysteryPhoto{width:58px;height:58px;margin:0 auto 5px;border-radius:13px}
+.sideMystery small{font-size:8px;color:#c7b8ff}
+.sideMystery b{
+  display:block;font-size:9px;direction:ltr;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.sideMystery span{font-size:8px;color:var(--gold);font-weight:900}
+.sideMystery.empty{font-size:9px;color:var(--muted);padding:11px 5px}
+
+.roundAnnouncement{
+  display:grid;gap:7px;margin:12px 0 2px;text-align:right
+}
+.roundAnnouncement div{
+  border-radius:13px;padding:10px 11px;border:1px solid var(--line);
+  background:#07100d;font-size:12px;font-weight:900;line-height:1.6
+}
+.roundAnnouncement .won{border-color:rgba(67,244,125,.32)}
+.roundAnnouncement .hiddenPlayer{border-color:rgba(166,136,255,.35)}
+
 .stage{
   border:1px solid var(--line);border-radius:27px;padding:21px;overflow:hidden;position:relative;
   background:
@@ -1234,6 +1307,18 @@ button:active:not(:disabled){transform:translateY(1px)}
 .event{display:flex;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}.event:last-child{border-bottom:0}
 .minute{color:var(--lime);font-weight:1000;min-width:36px;direction:ltr}
 .actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:15px}
+@media(max-width:760px){
+  .auctionArena{
+    grid-template-columns:1fr 1fr;
+    gap:8px
+  }
+  .auctionArena .stage{grid-column:1/-1;grid-row:1}
+  #sidePlayerA{grid-column:1;grid-row:2}
+  #sidePlayerB{grid-column:2;grid-row:2}
+  .sideBudget{padding:10px 9px}
+  .sideBudget .sideMoney strong{font-size:23px}
+  .sideMystery .sideMysteryPhoto{width:48px;height:48px}
+}
 @media(max-width:430px){
   .brand h1{font-size:41px}.managerGrid{grid-template-columns:1fr}.managerChoice{min-height:auto}
   .playerHero{grid-template-columns:106px 1fr;gap:12px}.playerCard{height:152px}.playerCard .sil{font-size:58px}
@@ -1375,26 +1460,33 @@ button:active:not(:disabled){transform:translateY(1px)}
     <div class="roomTag">
       <small>ROOM</small>
       <b id="auctionCode">------</b>
+      <button id="soundToggle" class="soundToggle" type="button" title="تشغيل أو كتم أصوات اللعبة">🔊</button>
     </div>
   </div>
 
   <div id="turnBanner" class="turnBanner">...</div>
 
-  <div class="stage">
-    <span id="position" class="pos">ST</span>
+  <div class="auctionArena">
+    <div id="sidePlayerA" class="sideBudget card"></div>
 
-    <div class="playerHero">
-      <div class="playerCard">
-        <div id="ovr" class="ovr">90</div>
-        <div id="playerVisual" class="playerVisual"></div>
-      </div>
+    <div class="stage">
+      <span id="position" class="pos">ST</span>
 
-      <div class="playerInfo">
-        <small>اللاعب المعروض الآن</small>
-        <h1 id="playerName">Player</h1>
-        <div id="playerMeta" class="playerMeta">🇫🇷 FRA • ST</div>
+      <div class="playerHero">
+        <div class="playerCard">
+          <div id="ovr" class="ovr">90</div>
+          <div id="playerVisual" class="playerVisual"></div>
+        </div>
+
+        <div class="playerInfo">
+          <small>اللاعب المعروض الآن</small>
+          <h1 id="playerName">Player</h1>
+          <div id="playerMeta" class="playerMeta">🇫🇷 FRA • ST</div>
+        </div>
       </div>
     </div>
+
+    <div id="sidePlayerB" class="sideBudget card"></div>
   </div>
 
   <div class="card bidBox">
@@ -1425,7 +1517,7 @@ button:active:not(:disabled){transform:translateY(1px)}
     <p id="bidError" class="error"></p>
   </div>
 
-  <div id="duelTimers" class="duelTimers"></div>
+  <div id="duelTimers" class="hidden"></div>
 
   <div id="pitches"></div>
 
@@ -1643,6 +1735,86 @@ let match=null;
 let googleUser=null;
 let googleCredential="";
 
+let soundEnabled=true;
+let audioCtx=null;
+let lastTickKey="";
+let previousPhase=null;
+
+function ensureAudio(){
+  if(!soundEnabled) return null;
+
+  if(!audioCtx){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return null;
+    audioCtx=new AC();
+  }
+
+  if(audioCtx.state==="suspended"){
+    audioCtx.resume().catch(()=>{});
+  }
+
+  return audioCtx;
+}
+
+function tone(freq,duration=0.08,type="sine",gainValue=0.05,delay=0){
+  const ctx=ensureAudio();
+  if(!ctx) return;
+
+  const start=ctx.currentTime+delay;
+  const osc=ctx.createOscillator();
+  const gain=ctx.createGain();
+
+  osc.type=type;
+  osc.frequency.setValueAtTime(freq,start);
+
+  gain.gain.setValueAtTime(0.0001,start);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.001,gainValue),start+0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001,start+duration);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.start(start);
+  osc.stop(start+duration+0.02);
+}
+
+function sfx(name){
+  if(!soundEnabled) return;
+
+  if(name==="bid"){
+    tone(520,.075,"square",.035,0);
+    tone(700,.09,"square",.03,.06);
+  }else if(name==="tick"){
+    tone(880,.045,"sine",.025,0);
+  }else if(name==="pass"){
+    tone(330,.10,"triangle",.035,0);
+    tone(220,.14,"triangle",.03,.08);
+  }else if(name==="round"){
+    tone(523,.12,"sine",.05,0);
+    tone(659,.12,"sine",.05,.10);
+    tone(784,.18,"sine",.055,.20);
+  }else if(name==="mystery"){
+    tone(440,.08,"triangle",.035,0);
+    tone(554,.08,"triangle",.035,.08);
+    tone(831,.18,"triangle",.045,.16);
+  }else if(name==="start"){
+    tone(392,.09,"square",.025,0);
+    tone(523,.10,"square",.03,.08);
+    tone(659,.14,"square",.035,.16);
+  }else if(name==="final"){
+    tone(523,.13,"sine",.045,0);
+    tone(659,.13,"sine",.045,.12);
+    tone(784,.13,"sine",.05,.24);
+    tone(1046,.24,"sine",.055,.36);
+  }else if(name==="click"){
+    tone(620,.035,"sine",.012,0);
+  }
+}
+
+document.addEventListener("pointerdown",()=>{
+  ensureAudio();
+},{passive:true});
+
 const $=id=>document.getElementById(id);
 
 function show(id){
@@ -1783,6 +1955,20 @@ $("changeGoogleBtn").onclick=()=>{
   }catch(e){}
 
   renderGoogleButton();
+};
+
+$("soundToggle").onclick=()=>{
+  soundEnabled=!soundEnabled;
+  $("soundToggle").textContent=soundEnabled?"🔊":"🔇";
+  $("soundToggle").title=soundEnabled?"كتم أصوات اللعبة":"تشغيل أصوات اللعبة";
+
+  if(soundEnabled){
+    ensureAudio();
+    sfx("click");
+    toast("تم تشغيل أصوات اللعبة 🔊");
+  }else{
+    toast("تم كتم أصوات اللعبة 🔇");
+  }
 };
 
 $("createBtn").onclick=()=>{
@@ -1952,8 +2138,23 @@ $("declineRematchBtn").onclick=()=>{
 };
 
 socket.on("state",s=>{
+  const oldPhase=previousPhase;
+  previousPhase=s.phase;
+
   state=s;
   code=s.code;
+
+  if(s.phase==="auction" && oldPhase!=="auction"){
+    sfx("start");
+  }
+
+  if(s.phase==="auction" && s.seconds<=3 && s.seconds>0){
+    const tickKey=s.round+":"+s.turnPlayerId+":"+s.seconds;
+    if(tickKey!==lastTickKey){
+      lastTickKey=tickKey;
+      sfx("tick");
+    }
+  }
 
   if(s.phase==="manager"){
     show("manager");
@@ -1969,18 +2170,22 @@ socket.on("state",s=>{
 });
 
 socket.on("bid_event",e=>{
-  toast(e.bidderName+" زايد إلى €"+fmt(e.amount)+"M");
+  sfx("bid");
+  toast("💰 "+e.bidderName+" زايد إلى €"+fmt(e.amount)+"M");
 });
 
 socket.on("pass_event",e=>{
+  sfx("pass");
   if(e.reason==="timeout"){
-    toast("انتهى وقت "+e.playerName);
+    toast("⏰ انتهى وقت "+e.playerName);
   }else{
-    toast(e.playerName+" ترك اللاعب");
+    toast("✋ "+e.playerName+" ترك اللاعب");
   }
 });
 
 socket.on("round_result",r=>{
+  sfx("round");
+  setTimeout(()=>sfx("mystery"),240);
   showRoundResult(r);
 });
 
@@ -1999,6 +2204,7 @@ socket.on("rematch_accepted",()=>{
 });
 
 socket.on("match_result",r=>{
+  sfx("final");
   match=r;
   show("result");
   renderResult(r);
@@ -2081,60 +2287,96 @@ function renderAuction(s){
   $("customBidBtn").disabled=!mine;
   $("passBtn").disabled=!mine;
 
-  $("duelTimers").innerHTML=s.players.map(p=>{
+  function sideBudgetHtml(p,index){
+    if(!p){
+      return '<div class="sideTag">في انتظار اللاعب...</div>';
+    }
+
     const active=p.id===s.turnPlayerId;
+    const leading=p.id===s.highestBidder;
 
     const mystery=p.lastMystery
       ? (
-        '<div class="mysteryHud">'+
-          playerPhotoHtml(p.lastMystery,"mysteryHudPhoto")+
-          '<div>'+
-            '<small>🎲 آخر لاعب عشوائي — ظاهر للطرفين</small>'+
-            '<b>'+esc(p.lastMystery.name)+'</b>'+
-            '<span>'+p.lastMystery.ovr+' OVR • '+p.lastMystery.pos+'</span>'+
-          '</div>'+
+        '<div class="sideMystery">'+
+          playerPhotoHtml(p.lastMystery,"sideMysteryPhoto")+
+          '<small>🎲 آخر لاعب خفي</small>'+
+          '<b>'+esc(p.lastMystery.name)+'</b>'+
+          '<span>'+p.lastMystery.ovr+' OVR • '+p.lastMystery.pos+'</span>'+
         '</div>'
       )
-      : '<div class="mysteryHud empty">🎲 لا يوجد لاعب عشوائي حتى الآن</div>';
+      : '<div class="sideMystery empty">🎲 لم يحصل على لاعب خفي بعد</div>';
 
     return (
-      '<div class="card playerTimer '+(active?"activeTurn":"")+'">'+
-        mystery+
-        '<div class="ptop">'+
-          '<b>'+esc(p.name)+(p.id===myId?" • أنت":"")+'</b>'+
-          '<span class="money">€'+fmt(p.budget)+'M</span>'+
-        '</div>'+
-        '<div class="pstatus">'+
-          (active
-            ? '⏱️ دوره الآن: '+s.seconds+' ثواني'
-            : '⌛ منتظر دوره')+
-          ' • التشكيلة '+p.squad.length+'/11'+
-        '</div>'+
+      mystery+
+      '<div class="sideTag">'+
+        (p.id===myId ? 'أنت' : 'الخصم')+
+        (active ? ' • ⏱️ دوره الآن' : '')+
+      '</div>'+
+      '<div class="sideName">'+esc(p.name)+'</div>'+
+      '<div class="sideMoney"><strong>€'+fmt(p.budget)+'M</strong><span>الميزانية</span></div>'+
+      '<div class="sideStatus">'+
+        (leading ? '🔥 صاحب أعلى مزايدة<br>' : '')+
+        'التشكيلة: '+p.squad.length+'/11'+
       '</div>'
     );
-  }).join("");
+  }
 
-  hydratePlayerImages($("duelTimers"));
+  const pA=s.players[0]||null;
+  const pB=s.players[1]||null;
+
+  $("sidePlayerA").className=
+    "sideBudget card"+
+    (pA?.id===s.turnPlayerId?" activeTurn":"")+
+    (pA?.id===s.highestBidder?" leading":"");
+
+  $("sidePlayerB").className=
+    "sideBudget card"+
+    (pB?.id===s.turnPlayerId?" activeTurn":"")+
+    (pB?.id===s.highestBidder?" leading":"");
+
+  $("sidePlayerA").innerHTML=sideBudgetHtml(pA,0);
+  $("sidePlayerB").innerHTML=sideBudgetHtml(pB,1);
+
+  hydratePlayerImages($("sidePlayerA"));
+  hydratePlayerImages($("sidePlayerB"));
+
   renderLivePitches(s.players);
 }
 
 function showRoundResult(r){
   const winnerPlayer=r.winnerPlayer;
-  const randomPlayer=r.loserReward?.player || null;
+  const hiddenPlayer=r.loserReward?.player || null;
+  const hiddenOwner=r.loserReward?.userName || r.loserName || "";
 
-  $("revealIcon").textContent="👀";
-  $("revealEyebrow").textContent="نتيجة الجولة — ظاهرة للطرفين";
-  $("revealTitle").textContent="اللاعبان اتكشفوا";
-  $("revealText").textContent=
-    r.winnerName+
-    " كسب اللاعب المعروض"+
-    (r.price>0 ? " مقابل €"+fmt(r.price)+"M" : "")+
-    (r.loserName ? "، و"+r.loserName+" حصل على لاعب عشوائي مختلف مجانًا." : ".");
+  $("revealIcon").textContent="🏁";
+  $("revealEyebrow").textContent="انتهى المزاد — النتيجة ظاهرة للطرفين";
+  $("revealTitle").textContent="تم حسم الجولة";
+
+  const winnerSentence=winnerPlayer
+    ? (
+      '🏆 <b>'+esc(r.winnerName)+'</b> كسب مزاد اللاعب '+
+      '<b>'+esc(winnerPlayer.name)+'</b>'+
+      (r.price>0 ? ' مقابل <b>€'+fmt(r.price)+'M</b>' : '')
+    )
+    : "";
+
+  const hiddenSentence=hiddenPlayer
+    ? (
+      '🎲 <b>'+esc(hiddenOwner)+'</b> أخد اللاعب الخفي '+
+      '<b>'+esc(hiddenPlayer.name)+'</b>'
+    )
+    : "";
+
+  $("revealText").innerHTML=
+    '<div class="roundAnnouncement">'+
+      (winnerSentence ? '<div class="won">'+winnerSentence+'</div>' : '')+
+      (hiddenSentence ? '<div class="hiddenPlayer">'+hiddenSentence+'</div>' : '')+
+    '</div>';
 
   const winnerCard=winnerPlayer
     ? (
       '<div class="roundRevealCard">'+
-        '<small>🏆 '+esc(r.winnerName)+' — اللاعب المعروض</small>'+
+        '<small>🏆 '+esc(r.winnerName)+' — كسب المزاد</small>'+
         playerPhotoHtml(winnerPlayer,"revealPhoto")+
         '<b>'+esc(winnerPlayer.name)+'</b>'+
         '<span>'+winnerPlayer.ovr+' OVR • '+winnerPlayer.pos+'</span>'+
@@ -2142,24 +2384,24 @@ function showRoundResult(r){
     )
     : "";
 
-  const mysteryCard=randomPlayer
+  const hiddenCard=hiddenPlayer
     ? (
       '<div class="roundRevealCard">'+
-        '<small>🎲 '+esc(r.loserName)+' — اللاعب العشوائي</small>'+
-        playerPhotoHtml(randomPlayer,"revealPhoto")+
-        '<b>'+esc(randomPlayer.name)+'</b>'+
-        '<span>'+randomPlayer.ovr+' OVR • '+randomPlayer.pos+'</span>'+
+        '<small>🎲 '+esc(hiddenOwner)+' — أخد اللاعب الخفي</small>'+
+        playerPhotoHtml(hiddenPlayer,"revealPhoto")+
+        '<b>'+esc(hiddenPlayer.name)+'</b>'+
+        '<span>'+hiddenPlayer.ovr+' OVR • '+hiddenPlayer.pos+' • مجاني</span>'+
       '</div>'
     )
     : "";
 
   $("revealPlayer").innerHTML=
-    '<div class="roundRevealGrid">'+winnerCard+mysteryCard+'</div>';
+    '<div class="roundRevealGrid">'+winnerCard+hiddenCard+'</div>';
 
   hydratePlayerImages($("revealPlayer"));
 
   $("roundOverlay").classList.add("show");
-  setTimeout(()=>$("roundOverlay").classList.remove("show"),3200);
+  setTimeout(()=>$("roundOverlay").classList.remove("show"),4300);
 }
 
 function playerCardHtml(p){
@@ -2309,7 +2551,7 @@ function renderResult(r){
 app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V8 Rematch & Mystery running on port "+PORT);
+  console.log("BID XI V9 Sound Arena running on port "+PORT);
   if(!GOOGLE_CLIENT_ID){
     console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
   }
