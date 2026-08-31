@@ -202,29 +202,18 @@ const BASE_PLAYER_POOL = [
 ];
 
 // ============================================================
-// REAL 1000-PLAYER DATABASE
-// Source: public 2026 World Cup squads dataset (1,248 real players).
-// We keep the hand-curated star list, then fill the database with
-// real player names from the public dataset. Every in-game OVR is
-// clamped to at least 80.
+// 1000 RECOGNIZABLE REAL PLAYERS
+// Source: EA FC 25 / SoFIFA public educational dataset.
+// The source is already ordered with elite/high-rated players first.
+// We build the game database from the best 1000 unique real players.
+// No generated/fake names.
+// Game OVR is clamped to a minimum of 80.
 // ============================================================
 
 const REAL_PLAYER_DATA_URLS = [
-  "https://raw.githubusercontent.com/mominullptr/FIFA-World-Cup-2026-Dataset/refs/heads/main/squads_and_players.csv",
-  "https://github.com/mominullptr/FIFA-World-Cup-2026-Dataset/raw/refs/heads/main/squads_and_players.csv"
+  "https://raw.githubusercontent.com/Radzim/football_data/refs/heads/main/sofifa.csv",
+  "https://github.com/Radzim/football_data/raw/refs/heads/main/sofifa.csv"
 ];
-
-const TARGET_POSITION_COUNTS = {
-  GK: 90,
-  LB: 85,
-  CB: 180,
-  RB: 85,
-  CM: 190,
-  CAM: 90,
-  LW: 90,
-  ST: 100,
-  RW: 90
-};
 
 let PLAYER_POOL = BASE_PLAYER_POOL.map(p=>({
   ...p,
@@ -298,75 +287,85 @@ function normalizeNameKey(name){
     .trim();
 }
 
-function hashNumber(value){
-  const s=String(value||"");
-  let h=2166136261;
+function cleanSoFifaName(row){
+  const description=String(row.description||"").trim();
 
-  for(let i=0;i<s.length;i++){
-    h^=s.charCodeAt(i);
-    h=Math.imul(h,16777619);
+  // Description normally starts with the familiar football name:
+  // "Mohamed Salah (...", "Rodri (...", "Kylian Mbappé (..."
+  const match=description.match(/^(.+?)\s*\(/);
+
+  if(match?.[1]){
+    return match[1].trim();
   }
 
-  return h>>>0;
+  return String(row.name||row.full_name||"Player")
+    .replace(/\s*-\s*$/,"")
+    .replace(/\u00a0/g," ")
+    .trim();
 }
 
-function gamePositionForRealPlayer(row){
-  const broad=String(row.position||"").toUpperCase().trim();
-  const id=Number(row.player_id)||hashNumber(row.player_name);
-  const height=Number(row.height_cm)||180;
+function normalizeGamePosition(raw){
+  const positions=String(raw||"")
+    .toUpperCase()
+    .split(",")
+    .map(x=>x.trim())
+    .filter(Boolean);
 
-  if(broad==="GK" || broad.includes("GOAL")){
-    return "GK";
-  }
+  if(positions.includes("GK")) return "GK";
 
-  if(broad==="DEF" || broad.includes("DEF")){
-    if(height>=184 || id%5<3) return "CB";
-    return id%2===0 ? "LB" : "RB";
-  }
+  if(positions.includes("CB")) return "CB";
+  if(positions.includes("LB") || positions.includes("LWB")) return "LB";
+  if(positions.includes("RB") || positions.includes("RWB")) return "RB";
 
-  if(broad==="MID" || broad.includes("MID")){
-    return id%4===0 ? "CAM" : "CM";
-  }
+  if(positions.includes("CAM") || positions.includes("CF")) return "CAM";
+  if(positions.includes("CM") || positions.includes("CDM")) return "CM";
 
-  const n=id%10;
-  if(n<3) return "LW";
-  if(n<7) return "ST";
-  return "RW";
+  if(positions.includes("LW") || positions.includes("LM")) return "LW";
+  if(positions.includes("RW") || positions.includes("RM")) return "RW";
+
+  if(positions.includes("ST")) return "ST";
+
+  // Fallbacks for uncommon combinations.
+  const first=positions[0]||"CM";
+
+  if(first.includes("B")) return "CB";
+  if(first.includes("M")) return "CM";
+  return "ST";
 }
 
-function realPlayerOvr(row){
-  const value=Math.max(0,Number(row.market_value_eur)||0);
-  const caps=Math.max(0,Number(row.caps)||0);
-  const goals=Math.max(0,Number(row.goals)||0);
+function gameOvrFromSoFifa(row){
+  const official=Math.max(0,Number(row.overall_rating)||0);
 
-  let ovr=80;
-
-  if(value>=80000000) ovr=89;
-  else if(value>=50000000) ovr=88;
-  else if(value>=30000000) ovr=87;
-  else if(value>=20000000) ovr=86;
-  else if(value>=12000000) ovr=85;
-  else if(value>=7000000) ovr=84;
-  else if(value>=4000000) ovr=83;
-  else if(value>=2000000) ovr=82;
-  else if(value>=800000) ovr=81;
-
-  if(caps>=90) ovr++;
-  if(goals>=25) ovr++;
-
-  return Math.max(80,Math.min(90,ovr));
+  // User requested no in-game player below 80.
+  return Math.max(80,Math.min(94,official||80));
 }
 
 function realPlayerBasePrice(ovr){
-  if(ovr>=90) return 16;
-  if(ovr>=88) return 13;
+  if(ovr>=92) return 20;
+  if(ovr>=90) return 17;
+  if(ovr>=88) return 14;
   if(ovr>=86) return 11;
   if(ovr>=84) return 8;
-  if(ovr>=82) return 5;
-  return 3;
+  if(ovr>=82) return 6;
+  return 4;
 }
 
-async function fetchTextWithTimeout(url,ms=12000){
+function countryCodeFromName(country){
+  const map={
+    "Argentina":"ARG","Belgium":"BEL","Brazil":"BRA","Canada":"CAN",
+    "Colombia":"COL","Denmark":"DEN","Ecuador":"ECU","Egypt":"EGY",
+    "England":"ENG","France":"FRA","Germany":"GER","Hungary":"HUN",
+    "Italy":"ITA","Japan":"JPN","Korea Republic":"KOR","Mexico":"MEX",
+    "Morocco":"MAR","Netherlands":"NED","Nigeria":"NGA","Norway":"NOR",
+    "Poland":"POL","Portugal":"POR","Scotland":"SCO","Serbia":"SRB",
+    "Slovenia":"SLO","Spain":"ESP","Sweden":"SWE","Switzerland":"SUI",
+    "Uruguay":"URU","Georgia":"GEO","Cameroon":"CMR"
+  };
+
+  return map[String(country||"").trim()] || "INT";
+}
+
+async function fetchTextWithTimeout(url,ms=15000){
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),ms);
 
@@ -374,7 +373,7 @@ async function fetchTextWithTimeout(url,ms=12000){
     const response=await fetch(url,{
       signal:controller.signal,
       headers:{
-        "User-Agent":"BID-XI/11.0"
+        "User-Agent":"BID-XI/13.0"
       }
     });
 
@@ -400,13 +399,13 @@ async function loadRealPlayerDatabase(){
       break;
     }catch(err){
       lastError=err;
-      console.warn("Real player dataset URL failed:",url,err?.message||err);
+      console.warn("Player dataset URL failed:",url,err?.message||err);
     }
   }
 
   if(!text){
     console.error(
-      "Could not load the real-player dataset. Using curated real-player fallback only.",
+      "Could not load SoFIFA player dataset. Using curated real-player fallback only.",
       lastError?.message||lastError||""
     );
 
@@ -427,87 +426,81 @@ async function loadRealPlayerDatabase(){
 
   const matrix=csvRows(text);
 
-  if(matrix.length<2){
-    throw new Error("Real-player CSV is empty");
+  if(matrix.length<1001){
+    throw new Error("SoFIFA CSV does not contain enough players");
   }
 
   const headers=matrix[0].map(x=>String(x).trim());
 
   const rows=matrix.slice(1).map(values=>{
     const obj={};
+
     headers.forEach((key,index)=>{
       obj[key]=values[index] ?? "";
     });
-    return obj;
-  }).filter(row=>row.player_name && row.position);
 
+    return obj;
+  }).filter(row=>
+    row.playerid &&
+    (row.name || row.full_name) &&
+    row.positions
+  );
+
+  // Sort explicitly by FC overall, then international reputation,
+  // then market value. This strongly favors recognizable players.
   rows.sort((a,b)=>{
-    return hashNumber(a.player_id+"|"+a.player_name) -
-           hashNumber(b.player_id+"|"+b.player_name);
+    const ratingDiff=(Number(b.overall_rating)||0)-(Number(a.overall_rating)||0);
+    if(ratingDiff) return ratingDiff;
+
+    const repDiff=(Number(b.international_reputation)||0)-(Number(a.international_reputation)||0);
+    if(repDiff) return repDiff;
+
+    const parseValue=v=>{
+      const s=String(v||"").replace(/[€$,]/g,"").trim().toUpperCase();
+      if(!s) return 0;
+
+      const n=parseFloat(s);
+      if(!Number.isFinite(n)) return 0;
+
+      if(s.endsWith("M")) return n*1_000_000;
+      if(s.endsWith("K")) return n*1_000;
+
+      return n;
+    };
+
+    return parseValue(b.value)-parseValue(a.value);
   });
 
-  const pool=BASE_PLAYER_POOL.map(p=>({
-    ...p,
-    ovr:Math.max(80,Number(p.ovr)||80),
-    realPlayer:true
-  }));
-
-  const seen=new Set(pool.map(p=>normalizeNameKey(p.name)));
-
-  const counts={};
-  for(const pos of Object.keys(TARGET_POSITION_COUNTS)){
-    counts[pos]=pool.filter(p=>p.pos===pos).length;
-  }
-
-  let nextId=Math.max(...pool.map(p=>Number(p.id)||0),0)+1;
+  const pool=[];
+  const seen=new Set();
+  let nextId=1;
 
   for(const row of rows){
     if(pool.length>=1000) break;
 
-    const key=normalizeNameKey(row.player_name);
+    const name=cleanSoFifaName(row);
+    const key=normalizeNameKey(name);
+
     if(!key || seen.has(key)) continue;
 
-    const pos=gamePositionForRealPlayer(row);
-    const target=TARGET_POSITION_COUNTS[pos]||0;
-
-    if((counts[pos]||0)>=target) continue;
-
-    const ovr=realPlayerOvr(row);
+    const officialOvr=Math.max(0,Number(row.overall_rating)||0);
+    const ovr=gameOvrFromSoFifa(row);
+    const pos=normalizeGamePosition(row.positions);
 
     pool.push({
       id:nextId++,
-      sourcePlayerId:Number(row.player_id)||null,
-      name:String(row.player_name).trim(),
+      sourcePlayerId:Number(row.playerid)||null,
+      name,
+      fullName:String(row.full_name||"").replace(/\u00a0/g," ").trim(),
       pos,
-      ovr:Math.max(80,ovr),
-      nation:"INT",
-      club:String(row.club_team||"").trim(),
-      base:realPlayerBasePrice(ovr),
-      realPlayer:true,
-      generated:false
-    });
-
-    seen.add(key);
-    counts[pos]=(counts[pos]||0)+1;
-  }
-
-  for(const row of rows){
-    if(pool.length>=1000) break;
-
-    const key=normalizeNameKey(row.player_name);
-    if(!key || seen.has(key)) continue;
-
-    const pos=gamePositionForRealPlayer(row);
-    const ovr=realPlayerOvr(row);
-
-    pool.push({
-      id:nextId++,
-      sourcePlayerId:Number(row.player_id)||null,
-      name:String(row.player_name).trim(),
-      pos,
-      ovr:Math.max(80,ovr),
-      nation:"INT",
-      club:String(row.club_team||"").trim(),
+      positions:String(row.positions||"").trim(),
+      ovr,
+      sourceOvr:officialOvr,
+      nation:countryCodeFromName(row.country_name),
+      country:String(row.country_name||"").trim(),
+      club:String(row.club_name||"").trim(),
+      league:String(row.club_league_name||"").trim(),
+      image:String(row.image||"").trim(),
       base:realPlayerBasePrice(ovr),
       realPlayer:true,
       generated:false
@@ -516,22 +509,25 @@ async function loadRealPlayerDatabase(){
     seen.add(key);
   }
 
-  PLAYER_POOL=pool.slice(0,1000).map(p=>({
-    ...p,
-    ovr:Math.max(80,Number(p.ovr)||80)
-  }));
+  if(pool.length<1000){
+    throw new Error("Could only build "+pool.length+" unique real players");
+  }
+
+  PLAYER_POOL=pool;
 
   playerDatabaseStatus={
-    loaded:PLAYER_POOL.length===1000,
+    loaded:true,
     count:PLAYER_POOL.length,
     source
   };
 
   console.log(
-    "REAL player database loaded:",
+    "TOP REAL player database loaded:",
     PLAYER_POOL.length,
-    "players | minimum OVR:",
+    "players | minimum game OVR:",
     Math.min(...PLAYER_POOL.map(p=>p.ovr)),
+    "| maximum source OVR:",
+    Math.max(...PLAYER_POOL.map(p=>p.sourceOvr||0)),
     "| source:",
     source
   );
@@ -1607,7 +1603,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V12 — تسجيل دخول دائم</title>
+<title>BID XI V13 — 1000 لاعب معروف</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1942,7 +1938,7 @@ button:active:not(:disabled){transform:translateY(1px)}
   <div class="brand">
     <div class="logo">⚽</div>
     <h1>BID <span>XI</span></h1>
-    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">1000 لاعب حقيقي • أقل OVR في اللعبة 80</small>
+    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">1000 لاعب حقيقي معروف • مختارين من أعلى لاعبي FC 25 • أقل OVR في اللعبة 80</small>
   </div>
 
   <div class="card homeCard">
@@ -2232,7 +2228,9 @@ function playerPhotoHtml(player,extraClass=""){
   const initial=esc((player.name||"?").charAt(0).toUpperCase());
 
   return (
-    '<div class="playerPhotoSlot '+extraClass+'" data-player-photo="'+esc(player.name)+'">'+
+    '<div class="playerPhotoSlot '+extraClass+'" '+
+      'data-player-photo="'+esc(player.name)+'" '+
+      'data-direct-image="'+esc(player.image||"")+'">'+
       '<div class="photoFallback">'+initial+'</div>'+
     '</div>'
   );
@@ -2301,8 +2299,13 @@ function hydratePlayerImages(root=document){
 
     slot.dataset.loading="1";
     const name=slot.dataset.playerPhoto;
+    const directImage=slot.dataset.directImage||"";
 
-    getPlayerImage(name).then(url=>{
+    const imagePromise=directImage
+      ? Promise.resolve(directImage)
+      : getPlayerImage(name);
+
+    imagePromise.then(url=>{
       if(!slot.isConnected) return;
 
       if(!url){
@@ -3275,7 +3278,7 @@ async function boot(){
   }
 
   server.listen(PORT,()=>{
-    console.log("BID XI V12 Persistent Sign-In running on port "+PORT);
+    console.log("BID XI V13 Top 1000 Real Players running on port "+PORT);
     console.log(
       "Player pool:",
       PLAYER_POOL.length,
