@@ -19,7 +19,7 @@ const FORMATION = [
   "LW", "ST", "RW"
 ];
 
-const BASE_PLAYER_POOL = [
+const PLAYER_POOL = [
   {id:1,name:"Gianluigi Donnarumma",pos:"GK",ovr:91,nation:"ITA",base:12},
   {id:2,name:"Thibaut Courtois",pos:"GK",ovr:90,nation:"BEL",base:11},
   {id:3,name:"Alisson Becker",pos:"GK",ovr:90,nation:"BRA",base:11},
@@ -163,166 +163,6 @@ const BASE_PLAYER_POOL = [
   {id:141,name:"Antony",pos:"RW",ovr:84,nation:"BRA",base:9},
   {id:142,name:"Noni Madueke",pos:"RW",ovr:86,nation:"ENG",base:11}
 ];
-
-// ============================================================
-// 1000-PLAYER MEGA DATABASE
-// The curated players above remain untouched.
-// Extra lower/mid-tier players are generated deterministically
-// so the game always has exactly 1000 unique players without
-// relying on an external API.
-// ============================================================
-
-const GENERATED_FIRST_NAMES = [
-  "Adam","Omar","Youssef","Karim","Ziad","Sami","Rami","Nabil","Amir","Tarek",
-  "Luca","Marco","Matteo","Andrea","Davide","Nico","Leon","Felix","Jonas","Lukas",
-  "Max","Noah","Elias","Oscar","Hugo","Leo","Theo","Enzo","Lucas","Arthur",
-  "Gabriel","Rafael","Pedro","Bruno","Joao","Tiago","Diego","Mateo","Julian","Santiago",
-  "Ivan","Milan","Nikola","Marko","Aleks","Daniel","David","Samuel","Benjamin","Victor",
-  "Ryan","Callum","Jamie","Lewis","Jack","Harry","Tom","Alex","Charlie","James",
-  "Moussa","Ibrahima","Yaya","Ismail","Amadou","Abdou","Sofiane","Bilal","Mehdi","Ayoub"
-];
-
-const GENERATED_LAST_NAMES = [
-  "Hassan","Mahmoud","Saleh","Fathy","Nasser","Kamal","Said","Adel","Farouk","Hamdy",
-  "Rossi","Bianchi","Romano","Ricci","Costa","Silva","Santos","Oliveira","Pereira","Ferreira",
-  "Garcia","Martinez","Lopez","Torres","Ruiz","Moreno","Navarro","Vega","Molina","Castro",
-  "Schmidt","Muller","Weber","Fischer","Wagner","Becker","Hoffmann","Klein","Wolf","Neumann",
-  "Dubois","Moreau","Laurent","Simon","Michel","Leroy","Roux","Fournier","Girard","Andre",
-  "Johnson","Brown","Taylor","Wilson","Clark","Walker","Hall","Young","King","Wright",
-  "Jovanovic","Petrovic","Nikolic","Markovic","Ilic","Popovic","Kovacic","Horvat","Novak","Kralj",
-  "Diallo","Traore","Camara","Keita","Kone","Toure","Ba","Sow","Sy","Ndiaye"
-];
-
-const GENERATED_NATIONS = [
-  "EGY","FRA","ESP","ENG","ITA","GER","POR","BRA","ARG","NED",
-  "BEL","MAR","URU","COL","NOR","SWE","DEN","SUI","SRB","NGA",
-  "CMR","JPN","KOR","MEX","CAN","GEO","HUN","SLO"
-];
-
-const TARGET_POSITION_COUNTS = {
-  GK: 90,
-  LB: 85,
-  CB: 180,
-  RB: 85,
-  CM: 190,
-  CAM: 90,
-  LW: 90,
-  ST: 100,
-  RW: 90
-};
-
-function seededNumber(seed){
-  // Deterministic integer pseudo-random generator.
-  let x = Math.sin(seed * 999.91) * 10000;
-  return x - Math.floor(x);
-}
-
-function ratingForGenerated(index,pos){
-  const r = seededNumber(index * 7 + pos.charCodeAt(0));
-
-  // Distribution deliberately includes lots of ordinary players.
-  // ~15% low, ~50% average, ~28% good, ~7% very good.
-  if(r < 0.15) return 58 + Math.floor(seededNumber(index*11) * 8);   // 58-65
-  if(r < 0.65) return 66 + Math.floor(seededNumber(index*13) * 10);  // 66-75
-  if(r < 0.93) return 76 + Math.floor(seededNumber(index*17) * 8);   // 76-83
-  return 84 + Math.floor(seededNumber(index*19) * 4);                // 84-87
-}
-
-function basePriceFromRating(ovr){
-  if(ovr >= 90) return 16;
-  if(ovr >= 86) return 12;
-  if(ovr >= 82) return 9;
-  if(ovr >= 78) return 7;
-  if(ovr >= 74) return 5;
-  if(ovr >= 68) return 3;
-  return 1;
-}
-
-function buildMegaPlayerPool(basePlayers,target=1000){
-  const pool = basePlayers.map(p=>({...p}));
-  const usedNames = new Set(pool.map(p=>p.name.toLowerCase()));
-
-  const counts = {};
-  for(const pos of Object.keys(TARGET_POSITION_COUNTS)){
-    counts[pos] = pool.filter(p=>p.pos===pos).length;
-  }
-
-  let nextId = Math.max(...pool.map(p=>Number(p.id)||0)) + 1;
-  let generatorIndex = 1;
-
-  for(const [pos,targetCount] of Object.entries(TARGET_POSITION_COUNTS)){
-    while((counts[pos]||0) < targetCount && pool.length < target){
-      const fi = (generatorIndex * 7 + pos.length * 3) % GENERATED_FIRST_NAMES.length;
-      const li = (generatorIndex * 13 + pos.charCodeAt(0)) % GENERATED_LAST_NAMES.length;
-
-      let first = GENERATED_FIRST_NAMES[fi];
-      let last = GENERATED_LAST_NAMES[li];
-      let name = first + " " + last;
-
-      // Guarantee unique visible names.
-      if(usedNames.has(name.toLowerCase())){
-        name = first + " " + last + " " + (100 + generatorIndex);
-      }
-
-      usedNames.add(name.toLowerCase());
-
-      const ovr = ratingForGenerated(generatorIndex,pos);
-      const nation = GENERATED_NATIONS[
-        (generatorIndex * 5 + pos.length) % GENERATED_NATIONS.length
-      ];
-
-      pool.push({
-        id: nextId++,
-        name,
-        pos,
-        ovr,
-        nation,
-        base: basePriceFromRating(ovr),
-        generated: true
-      });
-
-      counts[pos] = (counts[pos]||0) + 1;
-      generatorIndex++;
-    }
-  }
-
-  // Safety fallback in case the curated pool changed later.
-  const fallbackPositions = Object.keys(TARGET_POSITION_COUNTS);
-  while(pool.length < target){
-    const pos = fallbackPositions[generatorIndex % fallbackPositions.length];
-    const first = GENERATED_FIRST_NAMES[generatorIndex % GENERATED_FIRST_NAMES.length];
-    const last = GENERATED_LAST_NAMES[(generatorIndex*3) % GENERATED_LAST_NAMES.length];
-    let name = `${first} ${last} ${generatorIndex}`;
-
-    const ovr = ratingForGenerated(generatorIndex,pos);
-
-    pool.push({
-      id: nextId++,
-      name,
-      pos,
-      ovr,
-      nation: GENERATED_NATIONS[generatorIndex % GENERATED_NATIONS.length],
-      base: basePriceFromRating(ovr),
-      generated: true
-    });
-
-    generatorIndex++;
-  }
-
-  return pool.slice(0,target);
-}
-
-const PLAYER_POOL = buildMegaPlayerPool(BASE_PLAYER_POOL,1000);
-
-console.log(
-  "Player database loaded:",
-  PLAYER_POOL.length,
-  "players | ratings",
-  Math.min(...PLAYER_POOL.map(p=>p.ovr)),
-  "-",
-  Math.max(...PLAYER_POOL.map(p=>p.ovr))
-);
-
 
 const MANAGERS = {
   scout:{id:"scout",name:"الكشاف",icon:"🔎",desc:"أي لاعب غامض تحصل عليه تزيد قوته +1."},
@@ -1164,7 +1004,7 @@ const PAGE=String.raw`
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050908">
-<title>BID XI V10 — 1000 لاعب</title>
+<title>BID XI V9 — حرب المزاد</title>
 
 <style>
 *{box-sizing:border-box}
@@ -1499,7 +1339,7 @@ button:active:not(:disabled){transform:translateY(1px)}
   <div class="brand">
     <div class="logo">⚽</div>
     <h1>BID <span>XI</span></h1>
-    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">1000 لاعب داخل قاعدة اللعبة — من النجوم لحد اللاعبين العاديين</small>
+    <p>حرب المزاد — ابنِ تشكيلتك واسحق خصمك</p><small style="margin-top:9px">أكثر من 142 لاعب داخل قاعدة اللعبة</small>
   </div>
 
   <div class="card homeCard">
@@ -2711,7 +2551,7 @@ function renderResult(r){
 app.get("/",(req,res)=>res.type("html").send(PAGE.replace("__GOOGLE_CLIENT_ID__",GOOGLE_CLIENT_ID)));
 
 server.listen(PORT,()=>{
-  console.log("BID XI V10 1000 Players running on port "+PORT);
+  console.log("BID XI V9 Sound Arena running on port "+PORT);
   if(!GOOGLE_CLIENT_ID){
     console.log("WARNING: GOOGLE_CLIENT_ID is not set. App will run, but Google Login stays disabled.");
   }
